@@ -95,6 +95,8 @@ class UniProtResolver(IdResolver):
         return self.return_matches(unsorted_matches)
 
     def return_matches(self, unsorted_matches):
+        for match in unsorted_matches:
+            match.context = UniProtResolver.sort_list(match.context)
         sorted_matches = UniProtResolver.sort_matches(unsorted_matches)
         if len(sorted_matches) == 0:
             return []
@@ -113,7 +115,19 @@ class UniProtResolver(IdResolver):
     def resolve_internal(self, input_nodes: List[Node]) -> Dict[str, List[IdMatch]]:
         result_list = {}
         for node in input_nodes:
-            best_matches = self.get_matches_for_merged_list([node.id])
+            lookup_id = node.id
+            if lookup_id.startswith(('Symbol:', 'HGNC.SYMBOL:')):
+                # Restrict explicit symbols to symbol/synonym aliases, not protein names.
+                aliases = self.alias_map.get(lookup_id.split(':', 1)[1], [])
+                best_matches = self.return_matches([
+                    IdMatch(input=node.id, match=m.match,
+                            context=[c for c in m.context if c in ('symbol', 'synonym')])
+                    for m in aliases if any(c in ('symbol', 'synonym') for c in m.context)
+                ])
+            else:
+                if lookup_id.split(':', 1)[0].casefold() == str(Prefix.ENSEMBL).casefold():
+                    lookup_id = self.clean_id(lookup_id, 'ensembl')
+                best_matches = self.get_matches_for_merged_list([lookup_id])
             if not best_matches and isinstance(node.id, str) and node.id.startswith(f"{Prefix.UniProtKB}:"):
                 normalized_id = self.clean_id(node.id, 'uniprot')
                 if normalized_id != node.id:

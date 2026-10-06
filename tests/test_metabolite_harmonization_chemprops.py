@@ -401,8 +401,22 @@ def test_pubchem_chemprops_adapter_emits_chemprops(tmp_path: Path):
     assert node.chem_props[0].isomeric_smiles == "CN1C=NC=C1C[C@H](N)C(=O)O"
     assert node.chem_props[0].mw == "169.18"
     assert node.chem_props[0].iupac_name == "2-amino-3-(1-methylimidazol-4-yl)propanoic acid"
+    assert node.names == []  # The old pinned TSV has no PubChem Title.
     assert node.chem_props[0].derived_inchi_key == "JDHILDINMRGULE-LURJTMIESA-N"
     assert node.chem_props[0].derived_inchi_key_input_field == "iso_smiles"
+
+
+def test_pubchem_title_is_a_source_owned_name_when_future_snapshot_provides_it(tmp_path: Path):
+    tsv_path = tmp_path / "cid_molecular_info.tsv"
+    tsv_path.write_text(
+        "pubchem_id\tcid\ttitle\tiupac_name\n"
+        "PUBCHEM.COMPOUND:1\t1\tAcetyl-DL-carnitine\t3-acetoxy-4-(trimethylammonio)butanoate\n",
+        encoding="utf-8",
+    )
+    node = _records(PubchemMetaboliteChemPropsAdapter(molecular_info_file=str(tsv_path)))[0]
+    assert [(name.value, name.source, name.source_field) for name in node.names] == [
+        ("Acetyl-DL-carnitine", "PubChem", "title")]
+    assert node.chem_props[0].iupac_name == "3-acetoxy-4-(trimethylammonio)butanoate"
 
 
 def test_chemprops_are_json_serializable_after_output_conversion(tmp_path: Path):

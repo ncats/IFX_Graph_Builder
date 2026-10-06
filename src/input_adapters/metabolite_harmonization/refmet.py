@@ -63,6 +63,7 @@ class RefMetMetaboliteEquivalenceAdapter(InputAdapter):
         batch: List[MetaboliteIdentifier] = []
         emitted_ids: Set[str] = set()
         emitted_labeled_records: Set[Tuple[str, Tuple[str, ...]]] = set()
+        emitted_xref_labels: Set[Tuple[str, str]] = set()
 
         for record in self._iter_metabolite_records():
             primary_id = self._refmet_id(record["refmet_id"])
@@ -79,9 +80,20 @@ class RefMetMetaboliteEquivalenceAdapter(InputAdapter):
             for source_field, values in record["xrefs"].items():
                 for value in values:
                     node_id = self._external_id(source_field, value)
-                    if node_id is None or node_id == primary_id or node_id in emitted_ids:
+                    if node_id is None or node_id == primary_id:
                         continue
-                    batch.append(MetaboliteIdentifier(id=node_id))
+                    label = record.get("refmet_name")
+                    if label:
+                        label_key = (node_id, label)
+                        if label_key in emitted_xref_labels:
+                            continue
+                        emitted_xref_labels.add(label_key)
+                        names = [MetaboliteName(value=label, source="RefMet", source_field="refmet_name")]
+                    else:
+                        if node_id in emitted_ids:
+                            continue
+                        names = []
+                    batch.append(MetaboliteIdentifier(id=node_id, names=names))
                     emitted_ids.add(node_id)
                     if len(batch) >= self.batch_size:
                         yield batch

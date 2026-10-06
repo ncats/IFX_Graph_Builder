@@ -58,6 +58,8 @@ def test_refmet_adapter_emits_nodes_names_and_edges(tmp_path: Path):
         "formula": primary.chem_props[0].molecular_formula,
     }]) is False
     assert nodes_by_id["PUBCHEM.COMPOUND:442840"].prefix == "PUBCHEM.COMPOUND"
+    assert nodes_by_id["PUBCHEM.COMPOUND:442840"].names[0].value == "Acutumidine"
+    assert nodes_by_id["PUBCHEM.COMPOUND:442840"].names[0].source == "RefMet"
 
     expected_node_ids = {
         "REFMET:RM0108606",

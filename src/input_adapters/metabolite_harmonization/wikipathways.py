@@ -106,6 +106,7 @@ class WikiPathwaysMetaboliteEquivalenceAdapter(InputAdapter):
         batch: List[MetaboliteIdentifier] = []
         emitted_ids: Set[str] = set()
         emitted_labeled_records: Set[Tuple[str, Tuple[str, ...]]] = set()
+        emitted_xref_labels: Set[Tuple[str, Tuple[str, ...]]] = set()
 
         for record in self._iter_metabolite_records():
             source_id = record["source_id"]
@@ -116,9 +117,21 @@ class WikiPathwaysMetaboliteEquivalenceAdapter(InputAdapter):
                 emitted_ids.add(source_id)
 
             for _source_field, node_id in record["xrefs"]:
-                if node_id == source_id or node_id in emitted_ids:
+                if node_id == source_id:
                     continue
-                batch.append(MetaboliteIdentifier(id=node_id))
+                labels = tuple(record["labels"])
+                if labels:
+                    xref_key = (node_id, labels)
+                    if xref_key in emitted_xref_labels:
+                        continue
+                    emitted_xref_labels.add(xref_key)
+                    names = [MetaboliteName(value=label, source="WikiPathways",
+                                            source_field="rdfs:label") for label in labels]
+                else:
+                    if node_id in emitted_ids:
+                        continue
+                    names = []
+                batch.append(MetaboliteIdentifier(id=node_id, names=names))
                 emitted_ids.add(node_id)
                 if len(batch) >= self.batch_size:
                     yield batch

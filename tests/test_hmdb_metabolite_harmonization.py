@@ -181,7 +181,10 @@ def test_hmdb_metabolite_harmonization_adapter_emits_nodes_and_equivalence_edges
         "Pi-methylhistidine",
         "1-MHis",
     ]
-    assert nodes_by_id["PUBCHEM.COMPOUND:92105"].names == []
+    assert {name.value for node in nodes if node.id == "PUBCHEM.COMPOUND:92105"
+            for name in node.names} == {"1-Methylhistidine", "1,3-Diaminopropane"}
+    assert all(name.source == "HMDB" for node in nodes if node.id == "PUBCHEM.COMPOUND:92105"
+               for name in node.names)
     assert nodes_by_id["PUBCHEM.COMPOUND:92105"].synonyms == []
     assert nodes_by_id["PUBCHEM.COMPOUND:92105"].prefix == "PUBCHEM.COMPOUND"
 

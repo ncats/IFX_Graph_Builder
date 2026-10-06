@@ -18,7 +18,7 @@ matplotlib
 GEOparse
 pyyaml
 ijson
-ifx-registry[sources] @ git+https://github.com/ncats/IFX_Registry.git@v0.3.4
+ifx-registry[sources] @ git+https://github.com/ncats/IFX_Registry.git@v0.3.6
 gffutils
 mgp
 python-arango

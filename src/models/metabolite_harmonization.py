@@ -108,6 +108,8 @@ class MetaboliteChemProps:
 @search(text_fields=["id", "names", "synonyms"])
 class MetaboliteIdentifier(Node):
     prefix: Optional[str] = None
+    # Source assertion on the primary HMDB record; priority is selected by consumers.
+    hmdb_status: Optional[str] = None
     # Graph-derived baseline; generic field curations may replace this value.
     is_generic_structure: Optional[bool] = None
     names: List[MetaboliteName] = field(default_factory=list)
@@ -578,5 +580,6 @@ class RheaMetaboliteReactionEdge(Relationship):
 class RheaProteinReactionEdge(Relationship):
     start_node: ProteinIdentifier
     end_node: RheaReaction
+    source_id: Optional[str] = None
     source_field: Optional[str] = None
     source_file: Optional[str] = None

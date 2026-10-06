@@ -203,7 +203,9 @@ def test_rhea_reaction_adapter_emits_active_reactions_and_context_edges(tmp_path
     assert reaction_nodes["RHEA:10002"].direction == "RL"
     assert metabolite_nodes == {"CHEBI:15377", "RHEA.COMP:10594"}
     assert protein_nodes["UniProtKB:P00001"].is_reviewed is True
-    assert protein_nodes["UniProtKB:P00002"].is_reviewed is False
+    assert protein_nodes["UniProtKB:OLDP2"].is_reviewed is False
+    assert 'UniProtKB:P00002' not in protein_nodes
+    assert all(e.source_id == e.start_node.id for e in records if isinstance(e, RheaProteinReactionEdge))
     assert "UniProtKB:NOHUMAN" not in protein_nodes
     assert direction_edges == {
         ("RHEA:10000", "RHEA:10001", "LR"),
@@ -222,6 +224,6 @@ def test_rhea_reaction_adapter_emits_active_reactions_and_context_edges(tmp_path
     assert all(edge.source_id == edge.start_node.id for edge in metabolite_edges)
     assert protein_edges == {
         ("UniProtKB:P00001", "RHEA:10000", "rhea2uniprot_sprot.tsv"),
-        ("UniProtKB:P00002", "RHEA:10001", "rhea2uniprot_trembl.tsv.gz"),
+        ("UniProtKB:OLDP2", "RHEA:10001", "rhea2uniprot_trembl.tsv.gz"),
     }
     assert class_edges == {("RHEA:10000", "EC:1.1.1.1")}

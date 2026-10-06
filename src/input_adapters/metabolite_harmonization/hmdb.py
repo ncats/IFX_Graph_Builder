@@ -82,6 +82,7 @@ class HmdbMetaboliteEquivalenceAdapter(InputAdapter):
         batch: List[MetaboliteIdentifier] = []
         emitted_stubs: Set[str] = set()
         emitted_primary_labels: Set[str] = set()
+        emitted_xref_labels: Set[Tuple[str, str]] = set()
 
         for record in self._iter_metabolite_records():
             primary_id = self._hmdb_id(record["accession"])
@@ -96,9 +97,20 @@ class HmdbMetaboliteEquivalenceAdapter(InputAdapter):
             for source_field, values in record["xrefs"].items():
                 for value in values:
                     node_id = self._external_id(source_field, value)
-                    if node_id is None or node_id == primary_id or node_id in emitted_stubs:
+                    if node_id is None or node_id == primary_id:
                         continue
-                    batch.append(MetaboliteIdentifier(id=node_id))
+                    label = record.get("name")
+                    if label:
+                        label_key = (node_id, label)
+                        if label_key in emitted_xref_labels:
+                            continue
+                        emitted_xref_labels.add(label_key)
+                        names = [MetaboliteName(value=label, source="HMDB", source_field="name")]
+                    else:
+                        if node_id in emitted_stubs:
+                            continue
+                        names = []
+                    batch.append(MetaboliteIdentifier(id=node_id, names=names))
                     emitted_stubs.add(node_id)
                     if len(batch) >= self.batch_size:
                         yield batch
@@ -167,6 +179,7 @@ class HmdbMetaboliteEquivalenceAdapter(InputAdapter):
         record = {
             "accession": None,
             "name": None,
+            "status": None,
             "synonyms": [],
             "xrefs": {field: [] for field in ID_FIELD_PREFIXES},
         }
@@ -176,6 +189,8 @@ class HmdbMetaboliteEquivalenceAdapter(InputAdapter):
                 record["accession"] = cls._clean_text(child.text)
             elif tag == "name":
                 record["name"] = cls._clean_text(child.text)
+            elif tag == "status":
+                record["status"] = cls._clean_text(child.text)
             elif tag == "synonyms":
                 record["synonyms"] = cls._unique_clean_values(
                     cls._clean_text(synonym.text)
@@ -213,7 +228,8 @@ class HmdbMetaboliteEquivalenceAdapter(InputAdapter):
             )
             for synonym in record.get("synonyms", [])
         ]
-        return MetaboliteIdentifier(id=primary_id, names=names, synonyms=synonyms)
+        return MetaboliteIdentifier(id=primary_id, names=names, synonyms=synonyms,
+                                    hmdb_status=record.get("status"))
 
     @classmethod
     def _external_id(cls, source_field: str, value: Optional[str]) -> Optional[str]:

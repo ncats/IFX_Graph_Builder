@@ -251,6 +251,8 @@ class UniProtParser:
                 if 'synonyms' in gene and len(gene['synonyms']) > 0:
                     for synonym in gene['synonyms']:
                         UniProtParser.append_to_list(aliases, Alias('synonym', synonym['value']))
+        for match in UniProtParser.find_cross_refs(uniprot_obj, 'GeneID'):
+            UniProtParser.append_to_list(aliases, Alias('NCBI Gene ID', f"{Prefix.NCBIGene}:{match['id']}"))
         ensembl_objs = UniProtParser.find_matches(uniprot_obj, 'uniProtKBCrossReferences', 'database', 'Ensembl')
         for match in ensembl_objs:
             UniProtParser.append_to_list(aliases, Alias('Ensembl', Prefix.ENSEMBL + ":" + UniProtParser.trim_version(match['id'])))

@@ -100,6 +100,22 @@
 - Examine the graph staging database on `ifxdev` when relevant, especially for ingests that may already land in the graph built by `build_pharos.py`.
 - Examine the raw input files directly and verify whether their data lands correctly in the graph database and in MySQL outputs when a MySQL path exists.
 
+## Fail Loudly on Broken Requirements
+
+- Diagnose the root cause when required inputs, assumptions, or validation fail.
+  Do not invent a fallback, substitute another source or older data, skip a
+  required step, return an empty/default result, or weaken a check just to make
+  the run succeed.
+- Stop the affected operation with an actionable error that identifies what
+  failed and preserves the original cause. Do not report incomplete work or
+  degraded data as a successful build, capture, or release.
+- Retries and optional behavior are appropriate only when the existing contract
+  allows them and they preserve correctness. Make any degraded state visible;
+  a warning is not a substitute for failing a required operation.
+- Fix the underlying issue. If continuing requires changing the intended
+  behavior or data contract, explain the tradeoff and get an explicit decision
+  rather than silently introducing a workaround. Keep the fix minimal.
+
 ## Lessons Learned
 
 - Keep adapters focused on source parsing and structural graph emission; move cross-ontology ID normalization to resolvers.
@@ -110,7 +126,6 @@
 - When an edge can be emitted by multiple sources and later merged, keep source-specific payload in a `details` list instead of top-level edge fields.
 - Put disease descriptions on `Disease` nodes (for example `uniprot_description`), not on disease association edge details.
 - Prefer modern ontology-backed evidence codes from the source (for example ECO) over recreating legacy source-specific evidence encodings from older Pharos/TCRD tables.
-- When debugging ingest or conversion failures, prefer understanding the root cause before landing a defensive fix that may hide the real issue; temporary guards are fine, but they should follow diagnosis, not replace it.
 - If a build shows inexplicable dataclass/constructor signature errors for shared graph models, suspect import-order-sensitive model initialization. Prefer adding the affected modules to the centralized model preload in `src/use_cases/build_from_yaml.py` rather than scattering one-off imports through adapters or ETL code.
 
 ## Workflow References

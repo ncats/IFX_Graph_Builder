@@ -56,6 +56,10 @@ input_adapters:
     kwargs:
       data_source: uberon:ontology:2026-04-01
 
+  # TODO: Evaluate GOTermAdapter consuming go.obo from the expanded go:ontology
+  # bundle instead of go-basic.json, so Registry can eventually keep one format.
+  # Compare term fields, obsolete-term handling, and is_a edges before migrating;
+  # GO core has additional relationships. Keep the current pin until validated.
   - import: ./src/input_adapters/go/go_term.py
     class: GOTermAdapter
     kwargs:
@@ -157,12 +161,20 @@ input_adapters:
       data_source: hpa:tissue_expression:25.1
       uberon_map_file_path: ./src/input_adapters/shared/manual_uberon_map.tsv
 
+  # TODO: Migrate DrugCentral adapters from SQL to the published Registry snapshot
+  # drugcentral:drug_exports:56-export1 (database release 56; export schema 1).
+  # DrugNodeAdapter: read drugcentral_structures.smiles.tsv (ID, DRUG_NAME, SMILES).
+  # See export_contract.json and export_queries.sql in that snapshot for the contract.
+  # Keep the existing external pin/credentials until the file adapters are implemented.
   - import: ./src/input_adapters/drug_central/drug_node.py
     class: DrugNodeAdapter
     kwargs:
       data_source: {kind: external_dataset_version, snapshot_id: drugcentral:drug_database:54}
     credentials: ./src/use_cases/secrets/drugcentral_credentials.yaml
 
+  # TODO: Read drugcentral_drug_target_interaction.tsv.gz from
+  # drugcentral:drug_exports:56-export1; human rows with nonblank accessions.
+  # Preserve distinct-row handling, accession splitting, and activity-detail grouping.
   - import: ./src/input_adapters/drug_central/protein_drug_edge.py
     class: ProteinDrugEdgeAdapter
     kwargs:
@@ -194,6 +206,9 @@ input_adapters:
       pchembl_cutoff: *pchembl_cutoff
     credentials: ./src/use_cases/secrets/chembl_credentials.yaml
 
+  # TODO: Read drugcentral_indications.tsv from drugcentral:drug_exports:56-export1
+  # and join STRUCT_ID to the shared structures and interaction exports.
+  # Keep protein-disease edge construction and deduplication in this adapter.
   - import: ./src/input_adapters/drug_central/drug_indication.py
     class: DrugCentralIndicationAdapter
     kwargs:

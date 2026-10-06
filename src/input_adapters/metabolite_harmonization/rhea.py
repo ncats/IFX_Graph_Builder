@@ -254,7 +254,7 @@ class RheaReactionAdapter(InputAdapter):
                     reaction["ec_ids"].add(row["ID"].strip())
 
     def _apply_protein_rows(self, reactions: Dict[str, Dict]) -> None:
-        human_uniprot = self._human_uniprot_map() if self.filter_human_proteins else None
+        human_uniprot = self._human_uniprot_accessions() if self.filter_human_proteins else None
         for path, is_reviewed in [
             (self.rhea2uniprot_sprot_file, True),
             (self.rhea2uniprot_trembl_file, False),
@@ -268,12 +268,11 @@ class RheaReactionAdapter(InputAdapter):
                     accession = (row.get("ID") or "").strip()
                     if not accession:
                         continue
-                    if human_uniprot is not None:
-                        protein_id = human_uniprot.get(accession)
-                        if protein_id is None:
-                            continue
-                    else:
-                        protein_id = f"{Prefix.UniProtKB}:{accession}"
+                    if human_uniprot is not None and accession not in human_uniprot:
+                        continue
+                    # Membership filtering is not identity resolution. Retain the
+                    # accession reported by Rhea, including secondary accessions.
+                    protein_id = f"{Prefix.UniProtKB}:{accession}"
                     existing = reaction["proteins"].get(protein_id)
                     reaction["proteins"][protein_id] = {
                         "id": protein_id,
@@ -281,20 +280,19 @@ class RheaReactionAdapter(InputAdapter):
                         "source_file": path.name,
                     }
 
-    def _human_uniprot_map(self) -> Dict[str, str]:
+    def _human_uniprot_accessions(self) -> set[str]:
         if self.uniprot_human_file is None:
-            return {}
-        accession_map = {}
+            return set()
+        accessions = set()
         with gzip.open(self.uniprot_human_file, "rb") as handle:
             for record in ijson.items(handle, "results.item"):
                 primary = record.get("primaryAccession")
                 if not primary:
                     continue
-                primary_id = f"{Prefix.UniProtKB}:{primary}"
-                accession_map[primary] = primary_id
+                accessions.add(primary)
                 for secondary in record.get("secondaryAccessions") or []:
-                    accession_map[secondary] = primary_id
-        return accession_map
+                    accessions.add(secondary)
+        return accessions
 
     @staticmethod
     def _iter_reaction_nodes(reactions: Dict[str, Dict]) -> Iterable[RheaReaction]:
@@ -384,6 +382,7 @@ class RheaReactionAdapter(InputAdapter):
                     start_node=ProteinIdentifier(id=protein_id, is_reviewed=protein["is_reviewed"]),
                     end_node=RheaReaction(id=reaction_id),
                     source_field="rhea2uniprot",
+                    source_id=protein_id,
                     source_file=protein.get("source_file"),
                 )
 
