@@ -12,6 +12,7 @@ from src.models.datasource_version_info import DatasourceVersionInfo
 from src.models.metabolite_harmonization import (
     MetaboliteChemProps,
     MetaboliteIdentifier,
+    MetaboliteName,
     MetaboliteStructureComponent,
 )
 from src.shared.chebi_mass import validated_chebi_mass_values
@@ -314,6 +315,8 @@ class PubchemMetaboliteChemPropsAdapter(_ChemPropsAdapter):
                 isomeric_smiles = _clean_text(row.get("isomeric_smiles"))
                 yield MetaboliteIdentifier(
                     id=source_id,
+                    names=([MetaboliteName(value=title, source="PubChem", source_field="title")]
+                           if (title := _clean_text(row.get("title"))) else []),
                     chem_props=[
                         _metabolite_chem_props(
                             source="PubChem",

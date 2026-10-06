@@ -96,7 +96,7 @@ input_adapters:
   - import: ./src/input_adapters/metabolite_harmonization/chemprops.py
     class: PubchemMetaboliteChemPropsAdapter
     kwargs:
-      data_source: {kind: derived_snapshot, snapshot_id: pubchem:cid_molecular_info:deps-acde65d60ba9}
+      data_source: {kind: derived_snapshot, snapshot_id: pubchem:cid_molecular_info:deps-74c850f19f6c}
 
   - import: ./src/input_adapters/chebi/chebi_obo_adapter.py
     class: ChebiFullOboAdapter

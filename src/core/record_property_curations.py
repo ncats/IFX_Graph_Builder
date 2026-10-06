@@ -312,3 +312,20 @@ def format_curation_update(decision, previous: Any, current: Any) -> str:
         provenance,
         "CurationOverlay",
     ])
+
+
+def project_record_decisions(document: dict, decisions: list, schema_fields: dict,
+                             *, model_type: str) -> tuple[dict, list[dict]]:
+    """Apply validated decisions to one effective record without graph mutation."""
+    reports = []
+    for decision in decisions:
+        descriptor = schema_for_path(schema_fields, decision.path)
+        if decision.mode == "set":
+            validate_value_for_schema(decision.value, descriptor, decision.path)
+        document, report = apply_record_property_decision(document, decision)
+        reports.append(report)
+    if decisions:
+        document = recalculate_curated_structure_derivatives(
+            document, model_type=model_type, decisions=decisions,
+        )
+    return document, reports

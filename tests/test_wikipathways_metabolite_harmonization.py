@@ -156,7 +156,8 @@ def test_wikipathways_metabolite_adapter_emits_nodes_labels_and_edges(tmp_path: 
         for node in nodes
         if node.id == "KEGG.COMPOUND:C00051" and node.names
     )
-    assert nodes_by_id["PUBCHEM.COMPOUND:25246407"].names == []
+    assert nodes_by_id["PUBCHEM.COMPOUND:25246407"].names[0].value == "Glutathione (reduced)"
+    assert nodes_by_id["PUBCHEM.COMPOUND:25246407"].names[0].source == "WikiPathways"
     assert nodes_by_id["PUBCHEM.COMPOUND:25246407"].prefix == "PUBCHEM.COMPOUND"
     assert nodes_by_id["PUBCHEM.COMPOUND:753"].names[0].value == "glycine"
     assert nodes_by_id["KEGG.COMPOUND:C00051"].prefix == "KEGG.COMPOUND"

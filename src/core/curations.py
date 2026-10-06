@@ -66,7 +66,7 @@ _FRAMEWORK_PROPERTY_DENYLIST = frozenset({
     "_curation_original",
 })
 _MODEL_PROPERTY_DENYLIST = {
-    "MetaboliteIdentifier": frozenset({"prefix"}),
+    "MetaboliteIdentifier": frozenset({"prefix", "hmdb_status"}),
 }
 _MODEL_PROPERTY_ALLOWLIST = {
     "ChemicalEntity": frozenset({
@@ -706,6 +706,34 @@ def resolve_curation_type(storage, curation_type: str, *, allow_missing: bool = 
     if manifest.get("curation_type") != curation_type:
         raise ValueError(f"Curation manifest type mismatch in {key}")
 
+    return _resolve_curation_manifest(storage, curation_type, manifest)
+
+
+def replay_curation_snapshot(storage, metadata: dict) -> CurationSnapshot:
+    """Resolve exact ordered batches recorded by a stage, never the latest manifest."""
+    curation_type = metadata["curation_type"]
+    validate_curation_type(curation_type)
+    ids, hashes = metadata["batch_ids"], metadata["batch_hashes"]
+    if len(ids) != len(hashes) or len(set(ids)) != len(ids):
+        raise ValueError("Invalid recorded curation batch list")
+    expected_uri = f"s3://{storage.bucket}/{manifest_key(curation_type)}"
+    if metadata.get("source_uri") != expected_uri:
+        raise ValueError(f"Recorded curation storage differs from {expected_uri}")
+    manifest = {
+        "format_version": FORMAT_VERSION,
+        "curation_type": curation_type,
+        "revision": metadata["manifest_revision"],
+        "batches": [{"batch_id": bid, "sha256": sha} for bid, sha in zip(ids, hashes)],
+    }
+    snapshot = _resolve_curation_manifest(storage, curation_type, manifest)
+    if snapshot.fingerprint != metadata["resolved_operation_fingerprint"]:
+        raise ValueError(f"Recorded curation fingerprint mismatch: {curation_type}")
+    snapshot.manifest_hash = metadata["manifest_hash"]
+    return snapshot
+
+
+def _resolve_curation_manifest(storage, curation_type: str, manifest: dict) -> CurationSnapshot:
+    key = manifest_key(curation_type)
     operations: list[ResolvedCurationOperation] = []
     batch_ids: list[str] = []
     batch_hashes: list[str] = []

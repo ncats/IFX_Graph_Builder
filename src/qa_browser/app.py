@@ -51,8 +51,10 @@ from src.core.curations import (
     resolve_curation_type,
     validate_operation,
 )
+from src.core.graph_build_identity import source_build_fingerprint
 from src.core.record_property_curations import (
     CURATION_ORIGINAL_FIELD,
+    project_record_decisions,
     MISSING_ORIGINAL_MARKER,
     apply_record_property_decision,
     canonical_path as _canonical_record_property_path,
@@ -1988,21 +1990,12 @@ def _load_record_overlays(
     reports = []
     decisions_by_target = {}
     for decision in decisions:
-        descriptor = schema_for_path(schema_fields, decision.path)
-        if decision.mode == "set":
-            validate_value_for_schema(decision.value, descriptor, decision.path)
-        target_id = decision.target["id"]
-        overlays[target_id], report = apply_record_property_decision(
-            overlays[target_id], decision
-        )
-        decisions_by_target.setdefault(target_id, []).append(decision)
-        reports.append(report)
+        decisions_by_target.setdefault(decision.target["id"], []).append(decision)
     for target_id, target_decisions in decisions_by_target.items():
-        overlays[target_id] = recalculate_curated_structure_derivatives(
-            overlays[target_id],
-            model_type=model_type,
-            decisions=target_decisions,
+        overlays[target_id], target_reports = project_record_decisions(
+            overlays[target_id], target_decisions, schema_fields, model_type=model_type,
         )
+        reports.extend(target_reports)
     return overlays, reports
 
 
@@ -2203,28 +2196,7 @@ def _harmonization_source_build_fingerprint(db) -> Optional[str]:
         return None
     metadata_doc = db.collection("metadata_store").get("etl_metadata") or {}
     metadata = metadata_doc.get("value") or {}
-    registry_datasets = sorted([
-        {
-            "snapshot_id": item.get("snapshot_id"),
-            "build_key": item.get("build_key"),
-            "publication_fingerprint": item.get("publication_fingerprint"),
-        }
-        for item in metadata.get("registry_datasets") or []
-    ], key=lambda item: (
-        item.get("snapshot_id") or "",
-        item.get("build_key") or "",
-        item.get("publication_fingerprint") or "",
-    ))
-    identity = {
-        "run_key": metadata.get("_key"),
-        "run_date": metadata.get("run_date"),
-        "source_yaml": metadata.get("source_yaml"),
-        "git_commit": (metadata.get("git_info") or {}).get("git_commit"),
-        "registry_datasets": registry_datasets,
-    }
-    if not any(value for value in identity.values()):
-        return None
-    return payload_sha256(identity)
+    return source_build_fingerprint(metadata)
 
 
 def _harmonization_graph_fingerprint(db) -> dict:
