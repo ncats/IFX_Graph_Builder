@@ -2,6 +2,8 @@
 
 Evidence maps onto an already assigned RAMP identity; it never changes grouping.
 """
+from collections import Counter
+
 DETAIL_FIELDS = {
     'MetabolitePathwayEdge': 'source_id',
     'GenePathwayEdge': 'gene_id',
@@ -56,3 +58,48 @@ class SourceRows:
         for row in self.writer.db.execute('SELECT sourceId,rampId,IDtype,geneOrCompound,commonName,priorityHMDBStatus,dataSource,pathwayCount FROM ramp_source_rows ORDER BY sourceId,rampId,dataSource'):
             self.writer.add('source', **dict(zip(self.writer.columns['source'], row)))
         self.writer.db.execute('DROP TABLE ramp_source_rows')
+
+
+def representative_compound_names(db):
+    """Choose each compound's most frequent source-row name, as legacy RaMP did."""
+    result = {}
+    current = None
+    name_counts = Counter()
+    source_id_counts = Counter()
+    spellings = {}
+    source_spellings = {}
+
+    def selected():
+        counts = name_counts if name_counts else source_id_counts
+        if not counts:
+            return current
+        highest = max(counts.values())
+        winners = (value for value, count in counts.items() if count == highest)
+        if name_counts:
+            key = min(winners, key=lambda value: (len(spellings[value]), value))
+            return spellings[key]
+        key = min(winners)
+        return source_spellings[key]
+
+    for ramp_id, source_id, name in db.execute(
+        'SELECT rampId, sourceId, commonName FROM "_raw_source" '
+        "WHERE geneOrCompound='compound' ORDER BY rampId, sourceId, dataSource"
+    ):
+        if ramp_id != current:
+            if current is not None:
+                result[current] = selected()
+            current = ramp_id
+            name_counts.clear()
+            source_id_counts.clear()
+            spellings.clear()
+            source_spellings.clear()
+        normalized_id = source_id.lower()
+        source_id_counts[normalized_id] += 1
+        source_spellings.setdefault(normalized_id, source_id)
+        if name not in (None, '', 'NA', 'None'):
+            normalized = name.lower()
+            name_counts[normalized] += 1
+            spellings.setdefault(normalized, name)
+    if current is not None:
+        result[current] = selected()
+    return result

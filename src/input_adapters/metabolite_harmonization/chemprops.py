@@ -182,6 +182,9 @@ class ChebiMetaboliteChemPropsAdapter(_ChemPropsAdapter):
                 source_id = _prefixed_id("CHEBI", record.get("ChEBI ID"))
                 if source_id is None:
                     continue
+                name_field = next((field for field in ("ChEBI NAME", "ChEBI Name")
+                                   if _clean_text(record.get(field))), None)
+                chebi_name = _clean_text(record.get(name_field)) if name_field else None
                 inchi_key = _record_text(record, "INCHIKEY", "InChIKey")
                 smiles = _clean_text(record.get("SMILES"))
                 molecular_formula = _record_text(record, "FORMULA", "Formulae")
@@ -193,6 +196,8 @@ class ChebiMetaboliteChemPropsAdapter(_ChemPropsAdapter):
                 )
                 yield MetaboliteIdentifier(
                     id=source_id,
+                    names=([MetaboliteName(value=chebi_name, source="ChEBI",
+                                           source_field=name_field)] if chebi_name else []),
                     chem_props=[
                         _metabolite_chem_props(
                             source="ChEBI",
@@ -203,7 +208,7 @@ class ChebiMetaboliteChemPropsAdapter(_ChemPropsAdapter):
                             inchi=_record_text(record, "INCHI", "InChI"),
                             mw=mass,
                             monoisotopic_mass=monoisotopic_mass,
-                            common_name=_record_text(record, "ChEBI NAME", "ChEBI Name"),
+                            common_name=chebi_name,
                             molecular_formula=molecular_formula,
                         )
                     ],

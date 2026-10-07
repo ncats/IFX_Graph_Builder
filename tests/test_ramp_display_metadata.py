@@ -76,6 +76,73 @@ def test_collapsed_proteins_keep_accession_specific_names(tmp_path):
         assert rows[0][1] == rows[1][1]
 
 
+@pytest.mark.parametrize('source_only', [True, False])
+def test_gene_display_name_prefers_available_protein_name_over_identifier(tmp_path, source_only):
+    from tests.test_ramp_sqlite_export import resolved_fixture
+    from src.use_cases.ramp.build_sqlite import export_sqlite as run_export
+    reader, identity = resolved_fixture(tmp_path)
+    reader.data['ProteinIdentifier'][0].pop('gene_name')
+    path = tmp_path / 'gene-name.sqlite'
+    run_export(reader, path, gene_identity=identity,
+               protein_annotations=ProteinAnnotations({'UniProtKB:P1': 'Protein one'}),
+               source_only=source_only, progress=lambda _: None)
+    with sqlite3.connect(path) as db:
+        assert db.execute('''SELECT a.common_name FROM analyte a JOIN source s ON s.rampId=a.rampId
+                             WHERE s.sourceId='entrez:1' AND a.type='gene' LIMIT 1''').fetchone() == ('Protein one',)
+
+
+def test_gene_only_group_uses_name_from_its_canonical_uniprot_match(tmp_path):
+    from tests.test_ramp_sqlite_export import resolved_fixture
+    from src.use_cases.ramp.build_sqlite import export_sqlite as run_export
+    reader, identity = resolved_fixture(tmp_path)
+    reader.data['ProteinIdentifier'].clear()
+    reader.data['ProteinPathwayEdge'].clear()
+    reader.data['HmdbMetaboliteProteinAssociationEdge'].clear()
+    reader.data['RheaProteinReactionEdge'].clear()
+    path = tmp_path / 'gene-only.sqlite'
+    run_export(reader, path, gene_identity=identity,
+               protein_annotations=ProteinAnnotations({'UniProtKB:P1': 'Protein one'}),
+               source_only=True, progress=lambda _: None)
+    with sqlite3.connect(path) as db:
+        assert db.execute('''SELECT a.common_name FROM analyte a JOIN source s ON s.rampId=a.rampId
+                             WHERE s.sourceId='entrez:1' AND a.type='gene' LIMIT 1''').fetchone() == ('Protein one',)
+
+
+@pytest.mark.parametrize('source_only', [True, False])
+def test_synonym_rows_preserve_annotation_owner_after_merging(tmp_path, source_only):
+    from tests.test_ramp_sqlite_export import resolved_fixture
+    from src.use_cases.ramp.build_sqlite import export_sqlite as run_export
+    reader, identity = resolved_fixture(tmp_path)
+    metabolite = reader.data['MetaboliteIdentifier'][0]
+    metabolite['names'].append({'value': 'Water', 'source': 'LipidMaps'})
+    metabolite['synonyms'].append({'value': 'Aqua', 'source': 'HMDB'})
+    protein = reader.data['ProteinIdentifier'][0]
+    protein['sources'].extend(['Reactome', 'RHEA'])
+    protein['synonyms'] = ['HMDB protein alias']
+    annotations = ProteinAnnotations(
+        {'UniProtKB:P1': 'Pinned protein'},
+        aliases={'UniProtKB:P1': ['HGNC.SYMBOL:SAME', 'HGNC.SYMBOL:ALIAS']},
+    )
+    path = tmp_path / 'synonyms.sqlite'
+    run_export(reader, path, gene_identity=identity, protein_annotations=annotations,
+               source_only=source_only, progress=lambda _: None)
+    with sqlite3.connect(path) as db:
+        rows = db.execute('''SELECT Synonym,geneOrCompound,source,COUNT(*)
+                             FROM analytesynonym GROUP BY Synonym COLLATE BINARY,geneOrCompound,source
+                             ORDER BY geneOrCompound,source,Synonym''').fetchall()
+        assert ('Water', 'compound', 'hmdb', 1) in rows
+        assert ('Water', 'compound', 'lipidmaps', 1) in rows
+        assert ('Aqua', 'compound', 'hmdb', 1) in rows
+        assert ('SAME', 'gene', 'hmdb', 2) in rows  # Same name, two RaMP_G groups.
+        assert ('Protein one', 'gene', 'hmdb', 1) in rows
+        assert ('HMDB protein alias', 'gene', 'hmdb', 1) in rows
+        assert ('Pinned protein', 'gene', 'uniprot', 1) in rows
+        assert ('ALIAS', 'gene', 'uniprot', 1) in rows
+        assert ('SAME', 'gene', 'uniprot', 1) in rows
+        assert not any(source in ('reactome', 'rhea') and kind == 'gene'
+                       for _, kind, source, _ in rows)
+
+
 def test_hmdb_status_survives_source_parser_and_primary_node():
     import xml.etree.ElementTree as ET
     from src.input_adapters.metabolite_harmonization.hmdb import HmdbMetaboliteEquivalenceAdapter as Adapter

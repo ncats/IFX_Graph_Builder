@@ -1,7 +1,7 @@
 """Explicit RaMP row mappings using supplied identity groups; no graph mutations."""
 from collections import defaultdict
 from functools import lru_cache
-from src.use_cases.ramp.sqlite_source_evidence import SourceRows, evidence
+from src.use_cases.ramp.sqlite_source_evidence import SourceRows, evidence, representative_compound_names
 import json
 import math
 
@@ -61,6 +61,11 @@ def name_candidates(doc):
                          'COMMON_NAME': 0.2, 'SYSTEMATIC_NAME': 0.3}.get(
                              name.get('source_field'), 0.4)
             yield (rank, src, name["value"])
+    for name in doc.get('source_names') or []:
+        if not isinstance(name, dict) or not name.get('source') or not name.get('value'):
+            raise ValueError(f'Invalid source-attributed identifier name on {doc.get("id")}')
+        src = provider(name['source'])
+        yield (NAME_PRIORITY.get(src, 8), src, name['value'])
     for props in doc.get("chem_props") or []:
         if props.get("common_name"):
             src = provider(props["source"])
@@ -69,6 +74,29 @@ def name_candidates(doc):
     if doc.get("name"):
         yield (9, "", doc["name"])
     yield (99, "", source_id(doc["id"]))
+
+
+def lipidmaps_source_name(doc):
+    """Prefer a source-reported lipid abbreviation, then its synonyms and names."""
+    for item in doc.get('names') or []:
+        if (isinstance(item, dict) and provider(item.get('source') or '') == 'lipidmaps'
+                and item.get('source_field') == 'ABBREVIATION' and item.get('value')):
+            return item['value']
+    synonyms = [item['value'] for item in doc.get('synonyms') or []
+                if isinstance(item, dict) and provider(item.get('source') or '') == 'lipidmaps'
+                and item.get('source_field') == 'SYNONYMS' and item.get('value')]
+    if synonyms:
+        # Preserve the source's final synonym when several are provided.
+        return synonyms[-1]
+    for field in ('NAME', 'COMMON_NAME', 'SYSTEMATIC_NAME'):
+        for item in doc.get('names') or []:
+            if (isinstance(item, dict) and provider(item.get('source') or '') == 'lipidmaps'
+                    and item.get('source_field') == field and item.get('value')):
+                return item['value']
+    for props in doc.get('chem_props') or []:
+        if provider(props.get('source') or '') == 'lipidmaps' and props.get('common_name'):
+            return props['common_name']
+    return None
 
 
 def hierarchy(reader, term_collection, edge_collection, *, parent_first=True):
@@ -126,10 +154,17 @@ class Projection:
             self.write_metabolites()
             self.progress('Writing gene/protein lookup identities')
             self.write_genes()
+            self.progress('Writing pathways and their analyte associations')
+            self.write_pathways(include_catalyzed=False)
+            self.progress('Writing ontology and its metabolite associations')
+            self.write_ontology()
             self.progress('Writing association lookup identities')
-            self.write_source_associations()
+            self.write_source_associations(skip_collections={
+                'MetabolitePathwayEdge', 'GenePathwayEdge', 'ProteinPathwayEdge',
+                'HmdbMetaboliteOntologyEdge'})
             self.progress('Finalizing source lookup rows')
             self.source_rows.finish()
+            self.write_metabolite_analytes()
             return
         for name, step in [("metabolites and chemistry", self.write_metabolites),
                            ("gene and protein identifiers", self.write_genes),
@@ -139,8 +174,16 @@ class Projection:
             self.progress(f"Writing {name}")
             step()
         self.source_rows.finish()
+        self.write_metabolite_analytes()
 
-    def write_source_associations(self):
+    def write_metabolite_analytes(self):
+        self.writer.flush('source')
+        names = representative_compound_names(self.writer.db)
+        for rid in sorted(set(self.metabolites.values())):
+            self.writer.add('analyte', rampId=rid, type='compound',
+                            common_name=names.get(rid, rid))
+
+    def write_source_associations(self, skip_collections=frozenset()):
         """Read only the association evidence needed for source lookup rows."""
         ontology_terms, ontology_ancestors = hierarchy(
             self.reader, 'HmdbOntologyTerm', 'HmdbOntologyParentEdge')
@@ -156,6 +199,8 @@ class Projection:
                 ('GenePathwayEdge', 'gene', 'GeneIdentifier'),
                 ('ProteinPathwayEdge', 'gene', 'ProteinIdentifier'),
                 ('RheaProteinReactionEdge', 'gene', 'ProteinIdentifier')):
+            if collection in skip_collections:
+                continue
             for edge in self.reader.records(collection):
                 rid = (self.metabolites.get(edge['start_id']) if kind == 'compound'
                        else self.genes.get((node_type, edge['start_id'])))
@@ -204,7 +249,7 @@ class Projection:
                 previous = self.metabolite_source_groups.setdefault(normalized, self.metabolites[member])
                 if previous != self.metabolites[member]:
                     raise ValueError(f'Normalized source identifier {normalized} spans metabolite groups')
-        names, found = {}, set()
+        found = set()
         missing_chem, groups_with_chem = set(), set()
         from src.use_cases.ramp.sqlite_hmdb_status import group_statuses
         statuses, self.hmdb_status_manifest = group_statuses(
@@ -220,10 +265,7 @@ class Projection:
                 continue
             found.add(identifier)
             rid = self.metabolites[identifier]
-            candidate = min(name_candidates(doc))
-            if rid not in names or candidate < names[rid]:
-                names[rid] = candidate
-            self.write_identifier(doc, rid, "compound", candidate[2])
+            self.write_identifier(doc, rid, "compound")
             if not doc.get("chem_props"):
                 missing_chem.add(identifier)
             for props in doc.get("chem_props") or []:
@@ -243,8 +285,6 @@ class Projection:
         if found != set(self.metabolites):
             raise ValueError(f"Missing active metabolite records: {sorted(set(self.metabolites)-found)[:5]}")
         self.write_chebi_bridge_sources_and_chemistry(missing_chem, groups_with_chem)
-        for rid, (_, _, name) in sorted(names.items()):
-            self.writer.add("analyte", rampId=rid, type="compound", common_name=name)
 
     def write_chebi_bridge_sources_and_chemistry(self, missing_chem, groups_with_chem):
         """Register bridged ChEBI IDs; use linked chemistry when the ID has none."""
@@ -294,20 +334,33 @@ class Projection:
             "groups_gaining_first_chemistry": len(first_chem_groups),
         }
 
-    def write_identifier(self, doc, rid, kind, name):
+    def write_synonym(self, value, rid, kind, source):
+        if value is None:
+            return
+        if not isinstance(value, str):
+            raise ValueError(f'Non-string {kind} synonym for {rid}: {value!r}')
+        value = value.strip()
+        if value:
+            self.writer.add('analytesynonym', Synonym=value, rampId=rid,
+                            geneOrCompound=kind, source=source)
+
+    def write_identifier(self, doc, rid, kind):
         for src in sources(doc):
-            candidates = [n for n in name_candidates(doc) if n[1] == src or
-                          (kind == 'gene' and not n[1] and n[0] < 99)]
+            candidates = [n for n in name_candidates(doc) if n[1] == src]
             source_name = min(candidates)[2] if candidates else None
+            if (source_name is None and kind == 'gene' and src == 'hmdb'
+                    and doc.get('hmdb_accession')):
+                source_name = doc.get('name') or doc.get('gene_name')
+            if kind == 'compound' and src == 'lipidmaps':
+                source_name = lipidmaps_source_name(doc)
             # Preserve the legacy distinction between KEGG IDs reported by HMDB
             # and WikiPathways without pretending KEGG supplied those records.
             self.register_source(doc['id'], rid, kind, src, source_name)
-        for item in (doc.get("names") or []) + (doc.get("synonyms") or []):
-            value = item.get("value") if isinstance(item, dict) else item
-            attribution = [provider(item["source"])] if isinstance(item, dict) and item.get("source") else sources(doc)
-            if value:
-                for src in attribution:
-                    self.writer.add("analytesynonym", Synonym=value, rampId=rid, geneOrCompound=kind, source=src)
+        if kind == 'compound':
+            for item in (doc.get('names') or []) + (doc.get('synonyms') or []):
+                if not isinstance(item, dict) or not item.get('source'):
+                    raise ValueError(f'Metabolite name lacks source attribution: {doc["id"]}')
+                self.write_synonym(item.get('value'), rid, kind, provider(item['source']))
 
     def write_genes(self):
         groups = defaultdict(list)
@@ -328,24 +381,45 @@ class Projection:
                     if len(matches) == 1:
                         protein_name = self.protein_annotations.name(next(iter(matches)))
                 self.genes[(collection, doc["id"])] = rid
-                name = doc.get("gene_name") or protein_name or min(name_candidates(doc))[2]
-                names.append((not bool(doc.get('gene_name')), name, collection, doc['id']))
-                self.write_identifier(doc, rid, "gene", name)
+                candidate = min(name_candidates(doc))
+                if doc.get('gene_name'):
+                    name_rank, name = 0, doc['gene_name']
+                elif protein_name:
+                    name_rank, name = 1, protein_name
+                else:
+                    name_rank, name = (2 if candidate[0] < 99 else 3), candidate[2]
+                names.append((name_rank, name, collection, doc['id']))
+                self.write_identifier(doc, rid, "gene")
+                for item in doc.get('source_names') or []:
+                    if not isinstance(item, dict) or not item.get('source'):
+                        raise ValueError(f'Gene/protein name lacks source attribution: {doc["id"]}')
+                    self.write_synonym(item.get('value'), rid, 'gene', provider(item['source']))
                 if collection == "ProteinIdentifier":
                     if doc.get('hmdb_accession') and 'hmdb' in sources(doc):
                         self.register_source('HMDB:' + doc['hmdb_accession'], rid, 'gene', 'hmdb', doc.get('name'))
+                    if 'hmdb' in sources(doc):
+                        for value in (doc.get('gene_name'), doc.get('name'), *(doc.get('synonyms') or [])):
+                            self.write_synonym(value, rid, 'gene', 'hmdb')
                     self.proteins[doc["id"]] = {k: doc.get(k) for k in ("name", "gene_name", "protein_type", "is_reviewed")}
                     if protein_name:
                         self.proteins[doc['id']]['name'] = protein_name
+            for accession in identities.canonical_accessions[key]:
+                if canonical_name := self.protein_annotations.name(accession):
+                    names.append((1, canonical_name, 'UniProtKB', accession))
             self.writer.add("analyte", rampId=rid, type="gene", common_name=min(names)[1])
             for accession in identities.canonical_accessions[key]:
                 # Preserve every matched accession, including gene-only groups.
+                protein_name = self.protein_annotations.name(accession)
                 self.write_identifier({'id': accession, 'sources': ['uniprot'],
-                                       'name': self.protein_annotations.name(accession)}, rid, 'gene', accession)
+                                       'source_names': ([{'value': protein_name, 'source': 'UniProtKB'}]
+                                                        if protein_name else [])}, rid, 'gene')
+                self.write_synonym(protein_name, rid, 'gene', 'uniprot')
                 for alias in self.protein_annotations.aliases.get(accession, ()):
-                    self.register_source(alias, rid, 'gene', 'uniprot', self.protein_annotations.name(accession))
+                    self.register_source(alias, rid, 'gene', 'uniprot', protein_name)
+                    if alias.startswith('HGNC.SYMBOL:'):
+                        self.write_synonym(alias.split(':', 1)[1], rid, 'gene', 'uniprot')
 
-    def write_pathways(self):
+    def write_pathways(self, *, include_catalyzed=True):
         index = 0
         for doc in self.reader.records("PathwayIdentifier"):
             for src in sources(doc):
@@ -374,6 +448,8 @@ class Projection:
                         raise ValueError(f"Missing provider pathway: {pid}, {src}")
                     self.writer.add("analytehaspathway", rampId=rid, pathwayRampId=pathway,
                                     pathwaySource=self.pathway_sources[pathway])
+        if not include_catalyzed:
+            return
         catalyzed_types = defaultdict(set)
         for edge in self.reader.records("HmdbMetaboliteProteinAssociationEdge"):
             met = self.metabolites.get(edge["start_id"])
@@ -404,6 +480,9 @@ class Projection:
                     term = terms[tid]
                     self.writer.add("metabolite_class", ramp_id=rid, class_source_id=source_id(raw),
                         class_level_name=term["level_name"], class_name=term["name"], source=provider(src))
+        self.write_ontology()
+
+    def write_ontology(self):
         terms, ancestors = hierarchy(self.reader, "HmdbOntologyTerm", "HmdbOntologyParentEdge")
         allowed = {tid: t for tid, t in terms.items() if t.get("term_type") == "child"
                    and t["name"] not in self.ontology_policy.get(t.get("ontology_type"), [])}

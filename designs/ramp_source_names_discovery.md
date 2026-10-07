@@ -100,3 +100,16 @@ source rows, not a status claimed by PubChem or PFOCR.
 
 The user confirmed the source-owned propagation policy and LipidMaps ranking
 after discovery. The user runs graph/ETL rebuilds.
+
+## Representative metabolite name in `analyte`
+
+The first SQLite exporter selected the highest-priority provider name across
+each metabolite group. That differed from legacy RaMP, which selected the most
+frequent nonblank `source.commonName` case-insensitively, then fell back to the
+most frequent source ID. In the new source-table diagnostic,
+`RAMP_C_000009306` was labeled `Amylose` by provider priority even though its
+source rows contained `D-Glucose` 28 times and `Amylose` 3 times. The exporter
+now votes over finalized, deduplicated source rows after all association and
+chemistry source IDs are registered. Tied names prefer the shortest spelling,
+then lexical order, for deterministic output; gene/protein naming remains
+separate.

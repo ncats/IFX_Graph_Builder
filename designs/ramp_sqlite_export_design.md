@@ -561,6 +561,98 @@ Validation: 52 focused tests passed. A full SHA-verified parse of
 196,584 symbol, 39,878 GeneID, 647,000 Ensembl, and 146,604 HGNC accession/alias
 pairs before restricting to represented groups. No production export was run.
 
+### Synonym lookup attribution (2026-10-07)
+
+The diagnostic export now includes `analytesynonym` alongside `analyte` and
+`source`. Metabolite names and synonyms carry their `MetaboliteName.source`
+attribution; records without that source fail export rather than borrowing every
+provider on the merged identifier. HMDB `ProteinIdentifier.name`, `gene_name`,
+and string synonyms originate in the HMDB protein adapter and are attributed
+only to HMDB. For represented gene/protein groups, pinned UniProt recommended
+full protein names and explicit gene names/synonyms from the verified resolver
+file are attributed to UniProt. They never affect group construction. Identical
+four-column rows collapse; names shared by providers retain one row per provider.
+
+Legacy Rhea gene synonyms were obtained from a human UniProt download, while
+Reactome gene symbols were filled from UniProt, then both were labeled with the
+association provider in legacy `analytesynonym`. The new source labels describe
+the actual name provider. WikiPathways' old gene symbol came from its RDF
+HGNC-symbol cross-reference. The comparison report separates synonym row volume
+from distinct RaMP-ID coverage by attributed source. Each example follows one
+source ID across builds and shows names attributed to the selected provider;
+missing synonym tables are not zero-filled. ChEBI three-star SDF names are
+placed on their own `MetaboliteIdentifier` nodes and flow through this same
+source-attributed synonym path after rebuilding the graph and stage.
+
+### Pathway and ontology diagnostic extension (2026-10-07)
+
+The default diagnostic now retains `pathway`, `ontology`, `analytehaspathway`,
+and `analytehasontology` in addition to the three lookup tables. The projection
+uses the same pathway and ontology logic as the full base export. It skips
+unrelated catalysis and classification work. The report compares association
+rows, distinct analytes, and distinct targets by stored pathway source and
+analyte type; HMDB ontology links are grouped by ontology type. The ontology
+link has no source column, so its HMDB attribution is inferred from the target
+vocabulary. Examples match analytes by `source.sourceId` and targets by source
+pathway identity or ontology type/name, with ambiguous matches labeled.
+Source, synonym, and pathway example panels pair metabolite and gene/protein
+records under each input where both types exist. Missing types are labeled;
+ontology's gene side is structurally not applicable.
+
+Old WikiPathways gene synonyms are not UniProt enrichment: the legacy loader
+reads WikiPathways RDF `bdbHgncSymbol` into `geneInfoDictionary.common_name`
+and writes it with `wiki` attribution. The adapter now retains that predicate
+as `source_names` on the `GeneIdentifier` or `ProteinIdentifier` represented by
+the same RDF subject. The exporter writes those explicitly attributed symbols
+to `analytesynonym` with `source=wiki`; source-owned names also supply the
+identifier's `source.commonName`. This is distinct from corrected UniProt
+attribution for old Rhea and Reactome gene synonyms.
+
+The pinned `wikipathways:rdf_wp:2026-09-10` archive has 2,208 Turtle files;
+1,131 human pathway files yielded symbols on 12,795 distinct gene identifiers
+and 2,621 distinct protein identifiers. RDF types and identifier families can
+cross: a `wp:Protein` subject may carry a gene ID, and a `wp:GeneProduct`
+subject may carry a protein ID. The first audited patch covered 12,324 gene
+and 2,131 protein nodes; review caught the crossed cases, so a second audited
+patch covered the remaining 471 gene and 490 protein nodes. Every expected ID
+matched an existing graph node with WikiPathways provenance. Backups and plans
+are under `output_files/ramp/wikipathways-symbol-repair/` and
+`output_files/ramp/wikipathways-symbol-cross-type-repair/`. The stored collection schemas were updated
+for the new field. GeneIdentifier and ProteinIdentifier are not pinned in the
+harmonization stage's source revisions, so stage summaries and fingerprints
+were left intact; `StageReader` validated the latest completed stage afterward.
+
+#### Authorized current-graph ChEBI name repair
+
+The user requested an in-place repair instead of another graph rebuild. The
+current graph already held the exact pinned `chebi:three_star_sdf:2026-09-09`
+name in same-ID `chem_props.common_name`; 52,956 ChEBI identifiers had such a
+name, none had a ChEBI-attributed `names` entry, and all had ChEBI provenance.
+The repair appended one `MetaboliteName` with source `ChEBI` and source field
+`ChEBI NAME` to each of those identifiers, leaving existing names and chemistry
+intact. All 52,956 patched names were verified against their same-ID chemistry.
+
+The current pipeline rules do not use names to form metabolite groups. Eight
+completed stage summaries and their completed pipeline run were rebased to the
+new `MetaboliteIdentifier` revision and source-content fingerprint, with an
+explicit `chebi_name_backfill` annotation. The latest stage
+`stage-07-b477c68b941a5659` passed the exporter's `StageReader` validation.
+Original stage keys remain as a documented annotation-repair exception; the
+pipeline was not rerun. Reversible field backups, stage/run backups, and the
+repair plan are under `output_files/ramp/chebi-name-repair/`. A new SQLite export
+is still needed to populate ChEBI `analytesynonym` rows.
+
+For LipidMaps `source.commonName`, prefer the identifier's `ABBREVIATION`, then
+the last value in its LipidMaps `SYNONYMS` field, then `NAME`, `COMMON_NAME`, or
+`SYSTEMATIC_NAME`. `LIPIDMAPS:LMFA00000001` demonstrates the distinction:
+the graph has `Acetylenic acids` as a synonym and `FA 40:7;O3` as its
+abbreviation; legacy RaMP stored the former, while the new preference selects
+the more informative abbreviation. This rule uses only names attached
+to the same identifier. Legacy RaMP also copied a name among a metabolite's
+LipidMaps-reported IDs, but the current export deliberately leaves an alias ID
+unnamed when it has no source-owned name, as requested. The field choice cannot
+restore those aliases' name coverage.
+
 ### ChEBI ChemicalEntity chemistry fallback (2026-10-06)
 
 The user's requested fallback reads the ChEBI `ChemicalEntity` only through the

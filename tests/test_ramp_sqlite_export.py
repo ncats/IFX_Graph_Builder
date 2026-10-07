@@ -129,6 +129,20 @@ def test_base_export_preserves_consumer_contract_and_does_not_invent_identity(tm
     assert manifest["excluded_metabolite_edges"] == {"MetabolitePathwayEdge": 1}
 
 
+@pytest.mark.parametrize('source_only', [True, False])
+def test_metabolite_analyte_name_uses_most_common_source_name(tmp_path, source_only):
+    reader = FixtureReader()
+    for i, spelling in enumerate(('D-Glucose', 'd-glucose', 'D-GLUCOSE'), 1):
+        reader.data['RheaMetaboliteReactionEdge'].append(
+            edge('CHEBI:1', 'RHEA:1', source_id=f'CHEBI:vote{i}', name=spelling, side='left')
+        )
+    path = tmp_path / 'majority.sqlite'
+    export_sqlite(reader, path, source_only=source_only, progress=lambda _: None)
+    with sqlite3.connect(path) as db:
+        assert db.execute("SELECT common_name FROM analyte WHERE rampId='RAMP_C_000000001'").fetchone() == ('D-Glucose',)
+        assert db.execute("SELECT count(*) FROM source WHERE rampId='RAMP_C_000000001' AND lower(commonName)='d-glucose'").fetchone() == (3,)
+
+
 def test_shuffled_input_keeps_ids_and_rows(tmp_path):
     left, right = FixtureReader(), FixtureReader()
     for values in right.data.values():

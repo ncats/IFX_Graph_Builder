@@ -33,7 +33,7 @@ def snapshot(path):
     with sqlite3.connect(path) as db:
         return {name: sorted(db.execute('SELECT * FROM "' + name + '"').fetchall(), key=repr)
                 for (name,) in db.execute("SELECT name FROM sqlite_master WHERE type='table'")
-                if name not in ('source', 'ramp_export_metadata', 'version_info', 'db_version')}
+                if name not in ('source', 'analytesynonym', 'ramp_export_metadata', 'version_info', 'db_version')}
 
 
 def test_enrichment_shared_aliases_do_not_merge_groups_or_add_associations(tmp_path):
@@ -52,6 +52,8 @@ def test_enrichment_shared_aliases_do_not_merge_groups_or_add_associations(tmp_p
             assert new.execute('select count(distinct rampId),group_concat(distinct dataSource) from source where sourceId=?',
                                (alias,)).fetchone() == (2, 'uniprot')
         assert new.execute("select count(*) from source where sourceId='uniprot:OLD1' and dataSource='uniprot'").fetchone() == (1,)
+        assert new.execute("select count(*) from analytesynonym where source='uniprot' and Synonym='SAME'").fetchone() == (2,)
+        assert old.execute("select count(*) from analytesynonym where source='uniprot'").fetchone() == (0,)
     assert manifest['gene_resolution'] == identity.manifest()
     assert manifest['protein_annotations']['lookup_alias_policy_version'] == 1
     assert manifest['protein_annotations']['file_accession_alias_counts_by_namespace']['HGNC.SYMBOL'] == 2

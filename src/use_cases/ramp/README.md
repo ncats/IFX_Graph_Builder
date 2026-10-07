@@ -1,15 +1,16 @@
 # RaMP builds
 
 `build_ramp.py` builds the source-evidence graph. `build_sqlite.py` currently
-exports a source-table diagnostic from a completed harmonization stage.
+exports a seven-table lookup and association diagnostic from a completed
+harmonization stage.
 
-## Export the source table
+## Export the lookup tables
 
 Run from the IFX_ODIN repository root with the project environment:
 
 ```bash
 .venv/bin/python -m src.use_cases.ramp.build_sqlite \
-  --stage-id stage-07-9cfef0c333530e83 \
+  --stage-id stage-07-b477c68b941a5659 \
   --output output_files/ramp/ramp-base.sqlite
 ```
 
@@ -19,7 +20,8 @@ The only required arguments are stage ID and output path. Optional arguments:
   intermediate artifact release-ready.
 - `--overwrite`: replace an existing output after the new export passes validation.
 - `--full-base`: opt in to the earlier full base-table export. By default, the
-  diagnostic contains only `source` and its required `analyte` key table;
+  diagnostic contains `analyte`, `source`, `analytesynonym`, `pathway`,
+  `ontology`, `analytehaspathway`, and `analytehasontology`;
   it is not an R-package database.
 - `--database`: defaults to `metabolite_harmonization`.
 - `--graph-credentials`: Arango credential YAML file, defaults to
@@ -32,6 +34,10 @@ The only required arguments are stage ID and output path. Optional arguments:
   human entries, matching the old RaMP scope) or `uniprot-human-reviewed.json.gz`.
   Both are read from the exact UniProt human snapshot
   recorded in the graph build, currently `uniprot:human:2026_03`.
+
+The command prints elapsed wall time for each completed phase and the total
+build (`HH:MM:SS.s`). If a phase fails, it prints the time spent in that phase
+and the elapsed time before failure.
 
 The command reads the existing graph and immutable curation batches. It does not
 rebuild the graph, perform another harmonization pass, or publish the stage to
@@ -49,7 +55,7 @@ Existing files are refused by default. To rebuild at the same path:
 
 ```bash
 .venv/bin/python -m src.use_cases.ramp.build_sqlite \
-  --stage-id stage-07-9cfef0c333530e83 \
+  --stage-id stage-07-b477c68b941a5659 \
   --output output_files/ramp/ramp-base.sqlite --overwrite
 ```
 
@@ -62,13 +68,30 @@ sidecars prevent replacement.
 
 ## Current scope
 
-The default export focuses on `source`: all IDs each input used to report
+The default export focuses on lookup data. `source` contains all IDs each input used to report
 retained RaMP data, including associations and chemistry. A source row maps a
 reported ID to a RaMP analyte and attributes it to the reporting input;
 `dataSource` and the ID namespace `IDtype` can differ. Direct chemistry
 assertions register their reported source ID. A ChEBI bridge adds a ChEBI row
 only when its ChemicalEntity provides retained fallback chemistry. UniProt
 lookup aliases remain attributed to UniProt. The diagnostic is not release-ready.
+`analytesynonym` keeps each source-owned metabolite name or synonym with its
+attributed source. HMDB protein names, gene symbols, and synonyms stay under
+HMDB; matched UniProt protein names and gene symbols/aliases from the same pinned
+resolver input appear under `uniprot`. Names from merged protein nodes are not
+copied to Rhea or Reactome simply because those sources supplied an association.
+WikiPathways HGNC-symbol links from the pinned RDF are stored as source-attributed
+names on the corresponding gene or protein identifier and exported as `wiki`
+synonyms. The current graph was backfilled in place; the audit and backup are in
+`output_files/ramp/wikipathways-symbol-repair/`.
+Rows are deduplicated by all four stored columns, retaining the same spelling
+under different sources or RaMP IDs.
+
+The diagnostic also carries pathway and HMDB ontology associations with their
+target lookup tables. `analytehaspathway.pathwaySource` is the stored source
+attribution, including `kegg` for HMDB-supplied KEGG pathways. The ontology
+association table has no source column; its HMDB attribution follows from its
+HMDB ontology terms. `ontology.metCount` remains pending.
 
 The earlier full base-table export remains available with `--full-base`. It
 retains the legacy table/column/index contract with these explicit differences:
@@ -116,12 +139,23 @@ edge counts are included in the manifest.
 
 Source identifier spelling is converted to the legacy namespace conventions
 (for example, `CHEBI:15377` becomes `chebi:15377`); original source IDs are retained.
-Unknown namespaces are preserved. Names are chosen deterministically, preferring
-HMDB, ChEBI, LipidMaps, RefMet, then PubChem. Individual source rows retain
+Unknown namespaces are preserved. Metabolite `analyte.common_name` is the most
+frequent nonblank `source.commonName` within its RaMP ID, counted case-insensitively
+across the finalized source rows as in the legacy build. Tied names prefer the
+shortest spelling, then lexical order;
+groups without named rows fall back to their most frequent source ID, then their
+RaMP ID. Individual source rows retain
 source-specific names. HMDB, RefMet, and WikiPathways names on reported
 cross-reference IDs come from the same provider record; Rhea names come from
-its reaction evidence. LipidMaps prefers its abbreviation before `NAME`.
+its reaction evidence. For LipidMaps `source.commonName`, a LipidMaps
+`ABBREVIATION` takes precedence, followed by a `SYNONYMS` value, then `NAME`,
+`COMMON_NAME`, and `SYSTEMATIC_NAME` from the same identifier. Names are never
+copied to another LipidMaps-reported ID in a RaMP group.
 Names are not borrowed from another provider to fill missing source rows.
+For gene/protein `analyte.common_name`, the exporter prefers a source-reported
+`gene_name` symbol, then the pinned UniProt protein name, then another available
+name. An identifier with its namespace prefix is used only when the group has
+no readable name; this fallback remains searchable in `source`.
 The current PubChem pin includes compound Titles, which are used as
 PubChem-attributed source names when present. CIDs without a Title retain an
 empty PubChem source name.
@@ -195,10 +229,21 @@ compares distinct metabolite and gene/protein RaMP IDs in `analyte`, then shows
 the `analyte` cells for D-glucose and EGFR matched across builds by their
 source IDs. Two subsequent tables count distinct RaMP IDs represented by each
 `source.dataSource`, separately for metabolites and genes/proteins. Expandable
-examples show one matched `source` record per input across builds, including
-all eight source columns. The lookup ambiguity and integrity checks follow.
+examples show a matched metabolite and gene/protein `source` record per input
+where available, including all eight source columns. Synonym sections then compare row counts and distinct
+RaMP IDs by attributed source and analyte type, with one real stored example
+per populated database/source/type. Example rows are paired by analyte type
+within each input; an unsupported type is labeled explicitly. A missing synonym table is shown as
+"Table absent" rather than zero. Separate tabs compare HMDB ontology links by
+ontology type and pathway links by stored source and analyte type. They show
+association rows, distinct RaMP IDs and distinct terms/pathways, plus examples
+matched by source identities across builds. Missing association tables are
+shown as "Table absent". The lookup ambiguity and integrity checks follow.
 Deltas compare each build with the preceding one. RaMP IDs are counted within
-a build, never matched across releases.
+a build, never matched across releases. Count increases/decreases are shaded
+green/red even when the previous count was zero; example field-coverage shading
+uses percentage-point change in populated rows, with its signed change shown
+as text.
 
 ```bash
 .venv/bin/python -m pytest tests/test_ramp_source_comparison.py --no-cov -q
