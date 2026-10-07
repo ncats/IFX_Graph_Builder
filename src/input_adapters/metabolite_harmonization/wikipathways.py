@@ -12,6 +12,7 @@ from src.interfaces.input_adapter import InputAdapter
 from src.models.datasource_version_info import DatasourceVersionInfo
 from src.models.metabolite_harmonization import (
     GeneIdentifier,
+    IdentifierName,
     GenePathwayDetail,
     GenePathwayEdge,
     MetaboliteIdentifier,
@@ -386,31 +387,33 @@ class WikiPathwaysPathwayContextAdapter(InputAdapter):
 
     def _iter_gene_node_batches(self) -> Generator[List[GeneIdentifier], None, None]:
         batch: List[GeneIdentifier] = []
-        emitted: Set[str] = set()
+        names_by_id: Dict[str, Set[str]] = {}
         for record in self._iter_pathway_records():
             for gene_id in record["gene_ids"]:
-                if gene_id in emitted:
-                    continue
-                emitted.add(gene_id)
-                batch.append(GeneIdentifier(id=gene_id))
-                if len(batch) >= self.batch_size:
-                    yield batch
-                    batch = []
+                names_by_id.setdefault(gene_id, set()).update(record["gene_symbol_names"].get(gene_id, ()))
+        for gene_id, symbols in sorted(names_by_id.items()):
+            batch.append(GeneIdentifier(id=gene_id, source_names=[
+                IdentifierName(value=value, source="WikiPathways", source_field="wp:bdbHgncSymbol")
+                for value in sorted(symbols)]))
+            if len(batch) >= self.batch_size:
+                yield batch
+                batch = []
         if batch:
             yield batch
 
     def _iter_protein_node_batches(self) -> Generator[List[ProteinIdentifier], None, None]:
         batch: List[ProteinIdentifier] = []
-        emitted: Set[str] = set()
+        names_by_id: Dict[str, Set[str]] = {}
         for record in self._iter_pathway_records():
             for protein_id in record["protein_ids"]:
-                if protein_id in emitted:
-                    continue
-                emitted.add(protein_id)
-                batch.append(ProteinIdentifier(id=protein_id))
-                if len(batch) >= self.batch_size:
-                    yield batch
-                    batch = []
+                names_by_id.setdefault(protein_id, set()).update(record["protein_symbol_names"].get(protein_id, ()))
+        for protein_id, symbols in sorted(names_by_id.items()):
+            batch.append(ProteinIdentifier(id=protein_id, source_names=[
+                IdentifierName(value=value, source="WikiPathways", source_field="wp:bdbHgncSymbol")
+                for value in sorted(symbols)]))
+            if len(batch) >= self.batch_size:
+                yield batch
+                batch = []
         if batch:
             yield batch
 
@@ -533,9 +536,31 @@ class WikiPathwaysPathwayContextAdapter(InputAdapter):
                     "metabolite_ids": self._metabolite_ids(graph),
                     "gene_ids": self._gene_ids(graph),
                     "protein_ids": self._protein_ids(graph),
+                    "gene_symbol_names": self._symbol_names(graph, GENE_IDENTIFIER_PREFIXES),
+                    "protein_symbol_names": self._symbol_names(graph, PROTEIN_IDENTIFIER_PREFIXES),
                 })
         self._pathway_records_cache = records
         yield from records
+
+    @classmethod
+    def _symbol_names(cls, graph: Graph, prefix_map: Dict[str, str]) -> Dict[str, Set[str]]:
+        result: Dict[str, Set[str]] = {}
+        symbol_prefix = IDENTIFIERS_ORG_PREFIX + "hgnc.symbol/"
+        predicate = URIRef(WP + "bdbHgncSymbol")
+        for rdf_type in ("GeneProduct", "Protein"):
+            for subject in graph.subjects(RDF.type, URIRef(WP + rdf_type)):
+                node_id = cls._normalize_identifier_uri(str(subject), prefix_map)
+                if node_id is None:
+                    continue
+                for value in graph.objects(subject, predicate):
+                    uri = str(value)
+                    if not uri.startswith(symbol_prefix):
+                        raise ValueError(f"Unexpected WikiPathways HGNC symbol URI: {uri}")
+                    symbol = unquote(uri[len(symbol_prefix):]).strip()
+                    if not symbol or "/" in symbol:
+                        raise ValueError(f"Invalid WikiPathways HGNC symbol URI: {uri}")
+                    result.setdefault(node_id, set()).add(symbol)
+        return result
 
     @staticmethod
     def _is_human_pathway(graph: Graph) -> bool:

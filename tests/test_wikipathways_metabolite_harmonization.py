@@ -80,13 +80,23 @@ def _write_wikipathways_zip(path: Path):
 
 <https://identifiers.org/ncbigene/1234>
         rdf:type            wp:DataNode , wp:GeneProduct ;
+        wp:bdbHgncSymbol    <https://identifiers.org/hgnc.symbol/EGFR> ;
         wp:bdbEnsembl       <https://identifiers.org/ensembl/ENSG000001234> ;
         wp:bdbUniprot       <https://identifiers.org/uniprot/P99999> .
 
 <https://identifiers.org/uniprot/P12345>
         rdf:type            wp:DataNode , wp:Protein ;
+        wp:bdbHgncSymbol    <https://identifiers.org/hgnc.symbol/TP53> ;
         wp:bdbEntrezGene    <https://identifiers.org/ncbigene/5678> ;
         wp:bdbWikidata      <http://www.wikidata.org/entity/Q12345> .
+
+<https://identifiers.org/ncbigene/5678>
+        rdf:type            wp:DataNode , wp:Protein ;
+        wp:bdbHgncSymbol    <https://identifiers.org/hgnc.symbol/PROTEIN_TYPED_GENE> .
+
+<https://identifiers.org/uniprot/P99999>
+        rdf:type            wp:DataNode , wp:GeneProduct ;
+        wp:bdbHgncSymbol    <https://identifiers.org/hgnc.symbol/GENE_TYPED_PROTEIN> .
 """
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr("wp/WP100.ttl", ttl)
@@ -289,10 +299,20 @@ def test_wikipathways_pathway_context_uses_only_source_native_identifiers(tmp_pa
     protein_pathway_edges = {
         record.start_node.id for record in records if isinstance(record, ProteinPathwayEdge)
     }
-    assert gene_nodes == {"NCBIGene:1234"}
-    assert gene_pathway_edges == {"NCBIGene:1234"}
-    assert protein_nodes == {"UniProtKB:P12345"}
-    assert protein_pathway_edges == {"UniProtKB:P12345"}
+    assert gene_nodes == {"NCBIGene:1234", "NCBIGene:5678"}
+    assert gene_pathway_edges == gene_nodes
+    assert protein_nodes == {"UniProtKB:P12345", "UniProtKB:P99999"}
+    assert protein_pathway_edges == protein_nodes
+    gene = next(record for record in records if isinstance(record, GeneIdentifier) and record.id == "NCBIGene:1234")
+    protein = next(record for record in records if isinstance(record, ProteinIdentifier) and record.id == "UniProtKB:P12345")
+    assert [name.to_dict() for name in gene.source_names] == [{
+        "value": "EGFR", "source": "WikiPathways", "source_field": "wp:bdbHgncSymbol"}]
+    assert [name.to_dict() for name in protein.source_names] == [{
+        "value": "TP53", "source": "WikiPathways", "source_field": "wp:bdbHgncSymbol"}]
+    crossed_gene = next(record for record in records if isinstance(record, GeneIdentifier) and record.id == "NCBIGene:5678")
+    crossed_protein = next(record for record in records if isinstance(record, ProteinIdentifier) and record.id == "UniProtKB:P99999")
+    assert [name.value for name in crossed_gene.source_names] == ["PROTEIN_TYPED_GENE"]
+    assert [name.value for name in crossed_protein.source_names] == ["GENE_TYPED_PROTEIN"]
 
     pathway_detail = next(
         edge.details[0]

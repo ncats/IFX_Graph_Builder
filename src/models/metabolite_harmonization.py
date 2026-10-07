@@ -21,6 +21,17 @@ class MetaboliteName:
 
 
 @dataclass(frozen=True)
+class IdentifierName:
+    value: str
+    source: str
+    source_field: Optional[str] = None
+
+    def to_dict(self):
+        return {"value": self.value, "source": self.source,
+                "source_field": self.source_field}
+
+
+@dataclass(frozen=True)
 class MetaboliteStructureComponent:
     smiles: str
     molecular_formula: Optional[str] = None
@@ -292,6 +303,7 @@ class ProteinIdentifier(Node):
     is_reviewed: Optional[bool] = None
     name: Optional[str] = None
     synonyms: List[str] = field(default_factory=list)
+    source_names: List[IdentifierName] = field(default_factory=list)
     protein_type: Optional[str] = None
     gene_name: Optional[str] = None
     uniprot_name: Optional[str] = None
@@ -324,6 +336,7 @@ class ProteinIdentifier(Node):
 class GeneIdentifier(Node):
     prefix: Optional[str] = None
     names: List[str] = field(default_factory=list)
+    source_names: List[IdentifierName] = field(default_factory=list)
 
     def __post_init__(self):
         if self.prefix is None and self.id:

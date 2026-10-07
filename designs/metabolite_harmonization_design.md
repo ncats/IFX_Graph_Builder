@@ -132,6 +132,11 @@ accepts both explicit tag sets, preferring the current tags. This compatibility
 is intentional: a case-sensitive legacy parser silently retained only ChEBI
 ID, SMILES, and molecular weight after the upstream tag change, which removed
 reported keys and other chemistry fields without failing the build.
+The SDF's ChEBI name is also stored as a source-attributed name on the same
+`MetaboliteIdentifier`, with the actual SDF tag as `source_field`. It remains
+in `chem_props.common_name` for chemistry consumers. This lets downstream
+RaMP exports include the ChEBI-reported name in `analytesynonym` without
+assigning a name from another identifier in the metabolite group.
 
 The reported-key harmonization rules continue to consume only `inchi_key` and
 `inchi_key_prefix`. A separate optional derived-key rule can include calculated

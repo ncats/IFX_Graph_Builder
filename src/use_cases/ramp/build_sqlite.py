@@ -1,20 +1,57 @@
-"""Export a RaMP source-table diagnostic from a completed harmonization stage."""
+"""Export RaMP lookup tables from a completed harmonization stage."""
 import argparse
 from datetime import datetime, timezone
 from pathlib import Path
 import sys
+import time
+
+
+def _duration(seconds):
+    tenths = round(seconds * 10)
+    hours, remainder = divmod(tenths, 36_000)
+    minutes, remainder = divmod(remainder, 600)
+    return f"{hours:02d}:{minutes:02d}:{remainder / 10:04.1f}"
+
+
+class BuildTimer:
+    """Report completed phase and whole-build wall time using a monotonic clock."""
+
+    def __init__(self):
+        self.started = time.perf_counter()
+        self.phase_started = self.started
+        self.phase = None
+
+    def mark(self, message):
+        now = time.perf_counter()
+        if self.phase is not None:
+            print(f"Finished {self.phase}: {_duration(now - self.phase_started)}", flush=True)
+        print(f"{message} (elapsed {_duration(now - self.started)})", flush=True)
+        self.phase = message
+        self.phase_started = now
+
+    def finish(self, *, failed=False):
+        now = time.perf_counter()
+        if self.phase is not None:
+            phase_label = "Stopped during" if failed else "Finished"
+            print(f"{phase_label} {self.phase}: {_duration(now - self.phase_started)}", flush=True)
+        label = "Elapsed before failure" if failed else "Total build time"
+        print(f"{label}: {_duration(now - self.started)}", flush=True)
 
 
 class SourceOnlyWriter:
-    """Run the established projection while retaining only lookup rows."""
+    """Run the established projection while retaining reviewed diagnostic tables."""
     def __init__(self, writer):
         self.writer = writer
         self.db = writer.db
         self.columns = writer.columns
 
     def add(self, table, **row):
-        if table in ("analyte", "source"):
+        if table in ("analyte", "source", "analytesynonym", "pathway", "ontology",
+                     "analytehaspathway", "analytehasontology"):
             self.writer.add(table, **row)
+
+    def flush(self, table):
+        self.writer.flush(table)
 
 
 def export_sqlite(reader, output, *, gene_identity, protein_annotations=None, release_version="unreleased", overwrite=False, source_only=False, progress=print):
@@ -34,14 +71,15 @@ def export_sqlite(reader, output, *, gene_identity, protein_annotations=None, re
                                 protein_annotations=protein_annotations)
         projection.run(source_only=source_only)
         if source_only:
-            writer.retain_tables({"analyte", "source"})
+            writer.retain_tables({"analyte", "source", "analytesynonym", "pathway", "ontology",
+                                  "analytehaspathway", "analytehasontology"})
         else:
             write_versions(writer, reader, release_version, timestamp,
                            kegg_via_hmdb='kegg' in projection.pathway_sources.values())
         progress("Validating SQLite and checking source revisions")
         manifest = {
-            "format_version": 1, "scope": "source_table_diagnostic" if source_only else "base_tables",
-            "status": "source_table_diagnostic" if source_only else "post_processing_pending",
+            "format_version": 1, "scope": "lookup_table_diagnostic" if source_only else "base_tables",
+            "status": "lookup_table_diagnostic" if source_only else "post_processing_pending",
             "release_ready": False, "release_version": release_version, "created_at": timestamp,
             "stage_id": reader.stage["id"], "stage_revision": reader.stage.get("_rev"),
             "stage_summary": reader.stage["summary"],
@@ -65,9 +103,10 @@ def export_sqlite(reader, output, *, gene_identity, protein_annotations=None, re
             "excluded_metabolite_edges": dict(projection.skipped),
         }
         if source_only:
-            manifest["included_tables"] = ["analyte", "source"]
+            manifest["included_tables"] = ["analyte", "source", "analytesynonym", "pathway",
+                                           "ontology", "analytehaspathway", "analytehasontology"]
             manifest["pending_tables"] = []
-            manifest["pending_fields"] = ["source.pathwayCount"]
+            manifest["pending_fields"] = ["source.pathwayCount", "ontology.metCount"]
         return writer.finish(manifest, reader.verify_unchanged)
     finally:
         writer.close()
@@ -75,7 +114,7 @@ def export_sqlite(reader, output, *, gene_identity, protein_annotations=None, re
 
 def parser():
     result = argparse.ArgumentParser(
-        description="Export a source-table diagnostic from a harmonization stage (full base export optional).",
+        description="Export RaMP lookup tables from a harmonization stage (full base export optional).",
         epilog="Example: python -m src.use_cases.ramp.build_sqlite --stage-id stage-07-9cfef0c333530e83 --output ramp-base.sqlite",
     )
     result.add_argument("--stage-id", required=True, help="Exact graph stage key or HarmonizationStage ID")
@@ -102,6 +141,7 @@ def main(argv=None):
         parser().error(str(exc))
     if not args.stage_id.strip() or not args.release_version.strip():
         parser().error("Stage ID and release version must not be blank")
+    timer = BuildTimer()
     try:
         import yaml
         from src.infrastructure.object_storage import load_object_storage_credentials, object_storage_from_credentials
@@ -111,26 +151,29 @@ def main(argv=None):
         from src.use_cases.ramp.sqlite_gene_identity import GeneIdentity
         from src.core.registry_integration import RegistryIntegration
 
-        scope = "base tables; post-processing pending" if args.full_base else "source-table diagnostic"
+        scope = "base tables; post-processing pending" if args.full_base else "lookup-table diagnostic"
         print(f"Stage: {args.stage_id}\nGraph: {args.database}\nOutput: {args.output}\nScope: {scope}", flush=True)
+        timer.mark("Connecting to graph and storage")
         credentials = DBCredentials.from_yaml(yaml.safe_load(args.graph_credentials.read_text()))
         db = ArangoAdapter(credentials, args.database).get_db()
         storage = object_storage_from_credentials(load_object_storage_credentials(args.curation_credentials))
-        print("Reading stage and replaying recorded corrections", flush=True)
+        timer.mark("Reading stage and replaying recorded corrections")
         reader = StageReader(db, args.stage_id, storage)
-        print('Building gene/protein resolver from the recorded UniProt snapshot', flush=True)
+        timer.mark('Building gene/protein resolver from the recorded UniProt snapshot')
         registry = RegistryIntegration.connect({'credentials': args.registry_credentials,
                                                'cache_dir': args.registry_cache_dir})
         identity = GeneIdentity.from_stage(reader.metadata, registry, file_name=args.uniprot_file)
         from src.use_cases.ramp.sqlite_protein_annotations import ProteinAnnotations
         annotations = ProteinAnnotations.from_file(identity.input_file, identity.provenance)
         result = export_sqlite(reader, args.output, gene_identity=identity, protein_annotations=annotations, release_version=args.release_version,
-                               overwrite=args.overwrite, source_only=not args.full_base)
+                               overwrite=args.overwrite, source_only=not args.full_base, progress=timer.mark)
     except Exception as exc:
+        timer.finish(failed=True)
         print(f"RaMP SQLite export failed: {exc}", file=sys.stderr)
         return 1
+    timer.finish()
     print(f"Created {args.output}\n" + ("Base tables complete; post-processing pending." if args.full_base
-                                   else "Source-table diagnostic complete; not a release database."))
+                                   else "Lookup-table diagnostic complete; not a release database."))
     if args.full_base:
         print("Manifest: SELECT value FROM ramp_export_metadata WHERE key = 'manifest';")
     for table, count in sorted(result["row_counts"].items()):

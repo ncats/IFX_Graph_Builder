@@ -207,6 +207,9 @@ def test_chebi_chemprops_adapter_reads_gzipped_sdf(tmp_path: Path):
     node = _records(ChebiMetaboliteChemPropsAdapter(chebi_sdf_file=str(gz_path)))[0]
 
     assert node.id == "CHEBI:27596"
+    assert [name.to_dict() for name in node.names] == [
+        {"value": "1-methyl-L-histidine", "source": "ChEBI", "source_field": "ChEBI NAME"}
+    ]
     assert node.chem_props[0].source == "ChEBI"
     assert node.chem_props[0].mw == "169.184"
     assert node.chem_props[0].monoisotopic_mass == "169.085126611"
@@ -241,6 +244,18 @@ def test_chebi_chemprops_adapter_omits_partial_generic_structure_masses(tmp_path
     assert props.monoisotopic_mass is None
     assert props.molecular_formula == "C2H4NO2R"
     assert props.iso_smiles == "*NOC(C)=O"
+
+
+def test_chebi_chemprops_adapter_preserves_legacy_name_tag(tmp_path: Path):
+    gz_path = tmp_path / "legacy_chebi.sdf.gz"
+    with gzip.open(gz_path, "wt", encoding="utf-8") as handle:
+        handle.write(_sdf_record("CHEBI:1", {
+            "ChEBI ID": "CHEBI:1", "ChEBI Name": "Water"}))
+
+    node = _records(ChebiMetaboliteChemPropsAdapter(chebi_sdf_file=str(gz_path)))[0]
+    assert [name.to_dict() for name in node.names] == [
+        {"value": "Water", "source": "ChEBI", "source_field": "ChEBI Name"}]
+    assert node.chem_props[0].common_name == "Water"
 
 
 def test_lipidmaps_chemprops_adapter_emits_chemprops(tmp_path: Path):

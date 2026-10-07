@@ -50,11 +50,17 @@ def test_existing_identifier_chemistry_takes_precedence(tmp_path):
 def test_retained_chemistry_registers_reporting_source_without_bridge(tmp_path):
     reader = FixtureReader()
     reader.data['MetaboliteIdentifier'][1]['chem_props'] = [{
-        'source': 'ChEBI', 'source_id': 'CHEBI:1', 'molecular_formula': 'H2O'}]
+        'source': 'ChEBI', 'source_id': 'CHEBI:1', 'molecular_formula': 'H2O',
+        'common_name': 'Oxidane'}]
+    reader.data['MetaboliteIdentifier'][1]['names'] = [{
+        'value': 'Oxidane', 'source': 'ChEBI', 'source_field': 'ChEBI NAME'}]
+    reader.data['MetaboliteIdentifier'][1]['sources'].append('ChEBI\t255\t2026-09-09\t2026-09-09')
     path = tmp_path / 'chemistry-source.sqlite'
     export_sqlite(reader, path, progress=lambda _: None)
     with sqlite3.connect(path) as db:
         assert db.execute("select count(*) from source where sourceId='chebi:1' and dataSource='chebi'").fetchone() == (1,)
+        assert db.execute("select commonName from source where sourceId='chebi:1' and dataSource='chebi'").fetchone() == ('Oxidane',)
+        assert db.execute("select Synonym,source from analytesynonym where source='chebi'").fetchall() == [('Oxidane', 'chebi')]
 
 
 def test_bridge_without_retained_chemistry_does_not_attribute_chebi(tmp_path):
