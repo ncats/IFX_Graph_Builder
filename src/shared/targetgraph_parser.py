@@ -1,3 +1,4 @@
+import csv
 import re
 from abc import abstractmethod, ABC
 from datetime import datetime
@@ -57,6 +58,11 @@ def try_append_id(id_list, prop_dict, id_field, prov_field, source, prefix, remo
 
 
 class TargetGraphParser(CSVParser, ABC):
+
+    def __init__(self, file_path: str):
+        super().__init__(file_path)
+        with open(file_path, newline='') as source:
+            self.fieldnames = set(next(csv.reader(source, delimiter=self.delimiter)))
 
     @staticmethod
     @abstractmethod
@@ -257,6 +263,10 @@ class TargetGraphTranscriptParser(TargetGraphParser):
     def get_associated_ncbi_id(prop_dict: Dict) -> Optional[str]:
         return remove_decimal(prop_dict.get('refseq_ncbi_id'))
 
+    @staticmethod
+    def get_parent_gene_id(prop_dict: Dict) -> Optional[str]:
+        return prop_dict.get('parent_ifx_gene_id')
+
 
 class TargetGraphAddtlProteinIDParser(CSVParser):
     column_prefix_map = {
@@ -281,7 +291,8 @@ class TargetGraphAddtlProteinIDParser(CSVParser):
                           'uniprot',
                           id_details['prefix'],
                           id_details.get('removePrefix', False),
-                          id_details.get('removeDecimal', False)
+                          id_details.get('removeDecimal', False),
+                          splitIDs=True
                           )
         return ids
 
@@ -367,7 +378,13 @@ class TargetGraphProteinParser(TargetGraphParser):
     @staticmethod
     def get_gene_id(prop_dict: Dict) -> Optional[str]:
         ncbi_id = prop_dict.get('uniprot_NCBI_id', None)
-        return remove_decimal(ncbi_id)
+        if not ncbi_id:
+            return None
+        return '|'.join(remove_decimal(value) for value in split_and_trim_str(ncbi_id, '|') if value)
+
+    @staticmethod
+    def get_parent_gene_id(prop_dict: Dict) -> Optional[str]:
+        return prop_dict.get('parent_ifx_gene_id')
 
     @staticmethod
     def get_isoform_id(prop_dict: Dict) -> Optional[str]:

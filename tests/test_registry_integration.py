@@ -153,7 +153,7 @@ def test_config_resolves_dataset_arguments_with_one_connection(monkeypatch) -> N
         "resolvers": [{
             "kwargs": {
                 "data_source": "example:records:1",
-                "additional_ids_data_source": "example:mapping:2",
+                "protein_data_source": "example:mapping:2",
             },
         }],
         "input_adapters": [{

@@ -18,10 +18,9 @@ resolvers:
     import: ./src/id_resolvers/target_graph_resolver.py
     class: TCRDTargetResolver
     kwargs:
-      gene_data_source: target_graph:gene_ids:2026-05-11
-      transcript_data_source: target_graph:transcript_ids:2026-05-11
-      protein_data_source: target_graph:protein_ids:2026-05-20
-      uniprot_mapping_data_source: target_graph:uniprot_mapping:2026-05-11
+      gene_data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.4.0}
+      transcript_data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.4.0}
+      protein_data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.4.0}
       collapse_to_canonical: true
       canonical_type: Protein
       types:
@@ -34,55 +33,53 @@ input_adapters:
   - import: ./src/input_adapters/go/go_term.py
     class: GOTermAdapter
     kwargs:
-      data_source: go:ontology:2026-05-28
+      data_source: go:ontology:2026-07-26-bundle1
 
   - import: ./src/input_adapters/target_graph/protein_nodes_and_edges.py
     class: ProteinNodeAdapter
     kwargs:
-      data_source: target_graph:protein_ids:2026-05-20
+      data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.4.0}
       canonical_only: true
 
   - import: ./src/input_adapters/drug_central/drug_node.py
     class: DrugNodeAdapter
     kwargs:
-      data_source: {kind: external_dataset_version, snapshot_id: drugcentral:drug_database:54}
-    credentials: ./src/use_cases/secrets/drugcentral_credentials.yaml
+      data_source: {kind: source_snapshot, snapshot_id: drugcentral:drug_exports:56-export1}
 
   - import: ./src/input_adapters/drug_central/protein_drug_edge.py
     class: ProteinDrugEdgeAdapter
     kwargs:
-      data_source: {kind: external_dataset_version, snapshot_id: drugcentral:drug_database:54}
-    credentials: ./src/use_cases/secrets/drugcentral_credentials.yaml
+      data_source: {kind: source_snapshot, snapshot_id: drugcentral:drug_exports:56-export1}
 
   - import: ./src/input_adapters/iuphar/ligand_node.py
     class: LigandNodeAdapter
     kwargs:
-      data_source: iuphar:ligands_interactions:2026-06-15
+      data_source: iuphar:ligands_interactions:2026-09-16
 
   - import: ./src/input_adapters/iuphar/protein_ligand_edge.py
     class: ProteinLigandEdgeAdapter
     kwargs:
       pchembl_cutoff: *pchembl_cutoff
-      data_source: iuphar:ligands_interactions:2026-06-15
+      data_source: iuphar:ligands_interactions:2026-09-16
 
   - import: ./src/input_adapters/chembl/drug_node.py
     class: DrugNodeAdapter
     kwargs:
-      data_source: {kind: external_dataset_version, snapshot_id: chembl:activity_database:chembl36}
+      data_source: {kind: external_dataset_version, snapshot_id: chembl:activity_database:chembl37}
       pchembl_cutoff: *pchembl_cutoff
     credentials: ./src/use_cases/secrets/chembl_credentials.yaml
 
   - import: ./src/input_adapters/chembl/drug_node.py
     class: ProteinDrugEdgeAdapter
     kwargs:
-      data_source: {kind: external_dataset_version, snapshot_id: chembl:activity_database:chembl36}
+      data_source: {kind: external_dataset_version, snapshot_id: chembl:activity_database:chembl37}
       pchembl_cutoff: *pchembl_cutoff
     credentials: ./src/use_cases/secrets/chembl_credentials.yaml
 
   - import: ./src/input_adapters/jensenlab/total_pmscore.py
     class: TotalPMScoreAdapter
     kwargs:
-      data_source: jensenlab:protein_counts:2026-06-14
+      data_source: jensenlab:protein_counts:2026-10-04
 
   - import: ./src/input_adapters/antibodypedia/antibody_count.py
     class: AntibodyCountAdapter
@@ -92,7 +89,7 @@ input_adapters:
   - import: ./src/input_adapters/go/go_gaf.py
     class: ProteinGoTermEdgeAdapter
     kwargs:
-      data_source: go:goa_human_uniprot:2026-06-02
+      data_source: go:goa_human_uniprot:2026-07-28
       source: UniProt
 
   - import: ./src/input_adapters/go/go_gaf.py
@@ -104,7 +101,7 @@ input_adapters:
   - import: ./src/input_adapters/ncbi/publications.py
     class: NCBIPublicationAdapter
     kwargs:
-      data_source: ncbi:publications:2026-06-17
+      data_source: ncbi:publications:2026-10-05
 
   - import: ./src/input_adapters/pharos_mysql/idg_family_adapter.py
     class: IDGFamilyAdapter

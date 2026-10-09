@@ -11,7 +11,7 @@ resolvers:
     import: ./src/id_resolvers/target_graph_resolver.py
     class: TargetGraphGeneResolver
     kwargs:
-      data_source: target_graph:gene_ids:2026-05-11
+      data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.4.0}
       types:
         - Gene
       no_match_behavior: Skip
@@ -20,7 +20,7 @@ resolvers:
     import: ./src/id_resolvers/target_graph_resolver.py
     class: TargetGraphTranscriptResolver
     kwargs:
-      data_source: target_graph:transcript_ids:2026-05-11
+      data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.4.0}
       types:
         - Transcript
       no_match_behavior: Skip
@@ -29,8 +29,7 @@ resolvers:
     import: ./src/id_resolvers/target_graph_resolver.py
     class: TargetGraphProteinResolver
     kwargs:
-      data_source: target_graph:protein_ids:2026-05-20
-      additional_ids_data_source: target_graph:uniprot_mapping:2026-05-11
+      data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.4.0}
       types:
         - Protein
       no_match_behavior: Skip
@@ -39,42 +38,42 @@ input_adapters:
   - import: ./src/input_adapters/go/go_term.py
     class: GOTermAdapter
     kwargs:
-      data_source: go:ontology:2026-05-28
+      data_source: go:ontology:2026-07-26-bundle1
 
   - import: ./src/input_adapters/target_graph/protein_nodes_and_edges.py
     class: ProteinNodeAdapter
     kwargs:
-      data_source: target_graph:protein_ids:2026-05-20
+      data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.4.0}
 
   - import: ./src/input_adapters/target_graph/protein_nodes_and_edges.py
     class: IsoformProteinEdgeAdapter
     kwargs:
-      data_source: target_graph:protein_ids:2026-05-20
+      data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.4.0}
 
   - import: ./src/input_adapters/target_graph/gene_node.py
     class: GeneNodeAdapter
     kwargs:
-      data_source: target_graph:gene_ids:2026-05-11
+      data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.4.0}
 
   - import: ./src/input_adapters/target_graph/transcript_node.py
     class: TranscriptNodeAdapter
     kwargs:
-      data_source: target_graph:transcript_ids:2026-05-11
+      data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.4.0}
 
   - import: ./src/input_adapters/target_graph/gene_transcript_edge.py
     class: GeneTranscriptEdgeAdapter
     kwargs:
-      data_source: target_graph:transcript_ids:2026-05-11
+      data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.4.0}
 
   - import: ./src/input_adapters/target_graph/protein_nodes_and_edges.py
     class: TranscriptProteinEdgeAdapter
     kwargs:
-      data_source: target_graph:protein_ids:2026-05-20
+      data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.4.0}
 
   - import: ./src/input_adapters/target_graph/protein_nodes_and_edges.py
     class: GeneProteinEdgeAdapter
     kwargs:
-      data_source: target_graph:protein_ids:2026-05-20
+      data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.4.0}
 
   - import: ./src/input_adapters/drug_harmonizer/drug_nodes_and_edges.py
     class: DrugHarmonizerLigandNodeAdapter
@@ -89,7 +88,7 @@ input_adapters:
   - import: ./src/input_adapters/jensenlab/total_pmscore.py
     class: TotalPMScoreAdapter
     kwargs:
-      data_source: jensenlab:protein_counts:2026-06-14
+      data_source: jensenlab:protein_counts:2026-10-04
 
   - import: ./src/input_adapters/antibodypedia/antibody_count.py
     class: AntibodyCountAdapter
@@ -105,7 +104,7 @@ input_adapters:
   - import: ./src/input_adapters/go/go_gaf.py
     class: ProteinGoTermEdgeAdapter
     kwargs:
-      data_source: go:goa_human_uniprot:2026-06-02
+      data_source: go:goa_human_uniprot:2026-07-28
       source: UniProt
 
   - import: ./src/input_adapters/go/go_gaf.py
@@ -117,7 +116,7 @@ input_adapters:
   - import: ./src/input_adapters/ncbi/publications.py
     class: NCBIPublicationAdapter
     kwargs:
-      data_source: ncbi:publications:2026-06-17
+      data_source: ncbi:publications:2026-10-05
 
 output_adapters:
   - import: ./src/output_adapters/arango_output_adapter.py

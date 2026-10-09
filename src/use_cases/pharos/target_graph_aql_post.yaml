@@ -9,8 +9,7 @@ resolvers:
     import: ./src/id_resolvers/target_graph_resolver.py
     class: TargetGraphProteinResolver
     kwargs:
-      data_source: target_graph:protein_ids:2026-05-20
-      additional_ids_data_source: target_graph:uniprot_mapping:2026-05-11
+      data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.4.0}
       types:
         - Protein
       no_match_behavior: Skip
@@ -49,7 +48,7 @@ input_adapters:
   - import: ./src/input_adapters/manual/tdl_override.py
     class: TDLOverrideAdapter
     kwargs:
-      data_source: target_graph:tdl_updates:2025-06-24
+      data_source: target_graph:tdl_updates:2026-09-11
 
 graph_views:
   - id: current_tdls

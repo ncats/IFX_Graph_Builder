@@ -20,16 +20,16 @@ resolvers:
     class: TranslatorNodeNormResolver
     kwargs:
       types:
+        - Ligand
         - Disease
 
   - label: tcrd_targets
     import: ./src/id_resolvers/target_graph_resolver.py
     class: TCRDTargetResolver
     kwargs:
-      gene_data_source: target_graph:gene_ids:2026-05-11
-      transcript_data_source: target_graph:transcript_ids:2026-05-11
-      protein_data_source: target_graph:protein_ids:2026-05-20
-      uniprot_mapping_data_source: target_graph:uniprot_mapping:2026-05-11
+      gene_data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.4.0}
+      transcript_data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.4.0}
+      protein_data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.4.0}
       collapse_to_canonical: true
       canonical_type: Protein
       types:
@@ -42,22 +42,22 @@ input_adapters:
   - import: ./src/input_adapters/pharos_source_tcrd/ontology_tables.py
     class: MondoTableAdapter
     kwargs:
-      data_source: mondo:ontology:2026-06-02
+      data_source: mondo:ontology:2026-10-06
 
   - import: ./src/input_adapters/pharos_source_tcrd/ontology_tables.py
     class: MondoTableParentEdgeAdapter
     kwargs:
-      data_source: mondo:ontology:2026-06-02
+      data_source: mondo:ontology:2026-10-06
 
   - import: ./src/input_adapters/pharos_source_tcrd/ontology_tables.py
     class: DOTableAdapter
     kwargs:
-      data_source: disease_ontology:ontology:2026-05-30
+      data_source: disease_ontology:ontology:2026-09-30
 
   - import: ./src/input_adapters/pharos_source_tcrd/ontology_tables.py
     class: DOTableParentEdgeAdapter
     kwargs:
-      data_source: disease_ontology:ontology:2026-05-30
+      data_source: disease_ontology:ontology:2026-09-30
 
   - import: ./src/input_adapters/pharos_arango/tcrd/protein.py
     class: ProteinAdapter
@@ -184,7 +184,7 @@ input_adapters:
   - import: ./src/input_adapters/jensenlab/tinx.py
     class: TINXImportanceFileAdapter
     kwargs:
-      data_source: jensenlab:tinx:2026-06-14
+      data_source: jensenlab:tinx:2026-10-04
 
   - import: ./src/input_adapters/pharos_arango/tcrd/pathway.py
     class: ProteinPathwayAdapter

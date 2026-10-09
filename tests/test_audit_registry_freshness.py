@@ -335,7 +335,8 @@ def test_report_separates_manual_caveats_from_dependent_rebuilds(capsys) -> None
     output = capsys.readouterr().out
     assert "Rebuild in Registry, then update YAML (1)" in output
     assert "Then rebuild dependent datasets (1)" in output
-    assert "Needs manual source confirmation (1)" in output
+    assert "Needs manual check (1)" in output
+    assert "Needs manual source confirmation" not in output
     assert "Up to date — manual source check needed (1)" in output
     assert output.count("Caveat: Confirm that HMDB 5.0 is still current.") == 1
     assert (
@@ -472,3 +473,222 @@ def test_registration_prerequisite_is_a_dependent_rebuild(capsys) -> None:
     assert "Then rebuild dependent datasets (1)" in output
     assert "\nBlocked" not in output
     assert "1 dependent rebuilds" in output
+
+
+def test_shared_source_report_traces_nested_derived_inputs_and_compares_pins(
+    capsys,
+) -> None:
+    direct = (
+        SnapshotRef.source("babel:human_gene_compendium:2026jul22"),
+        SnapshotRef.source("uniprot:human:2026_02"),
+        SnapshotRef.source("ncbi:gene_summary:2026-06-17"),
+    )
+    targets = SnapshotRef.derived("ifx_harmonizers:targets:2.4.0")
+    baseline = SnapshotRef.derived("ifx_harmonizers:targets:2.3.0")
+    other = SnapshotRef.derived("example:other:1")
+    entries = (
+        SimpleNamespace(reference=direct[0], dependencies=()),
+        SimpleNamespace(reference=direct[1], dependencies=()),
+        SimpleNamespace(reference=direct[2], dependencies=()),
+        SimpleNamespace(
+            reference=baseline,
+            dependencies=(
+                SnapshotRef.source("babel:human_gene_compendium:2026jul22"),
+            ),
+        ),
+        SimpleNamespace(
+            reference=targets,
+            dependencies=(
+                baseline,
+                SnapshotRef.source("uniprot:human_idmapping:2026_03"),
+                SnapshotRef.source("uniprot:human_uniref100_sparql:2026_03-export1"),
+                SnapshotRef.source("ncbi:human_gene_info:2026-10-05"),
+            ),
+        ),
+        SimpleNamespace(
+            reference=other,
+            dependencies=(SnapshotRef.source("uniprot:human:2026_02"),),
+        ),
+    )
+    report = SimpleNamespace(
+        roots=(*direct, targets, other), entries=entries, is_current=True
+    )
+
+    comparisons = audit_registry_freshness.compare_shared_source_pins(report)
+
+    assert [item.result for item in comparisons] == [
+        "MATCH",  # Exact UniProt pin in the other derived root.
+        "MATCH",  # Babel reached through the nested 2.3.0 snapshot.
+        "REVIEW",  # The derived release has no NCBI gene summary pin.
+        "REVIEW",  # The derived release has no UniProt human pin.
+    ]
+    printable_report = SimpleNamespace(
+        roots=report.roots,
+        entries=tuple(
+            SimpleNamespace(
+                **vars(entry),
+                disposition=AuditDisposition.CURRENT,
+                caveats=(),
+                reason="Current",
+            )
+            for entry in entries
+        ),
+        is_current=True,
+    )
+    audit_registry_freshness.print_report(printable_report, "build.yaml")
+    output = capsys.readouterr().out
+    assert "Shared source pins (4 comparisons)" in output
+    assert "REVIEW (same source, different datasets): ncbi:gene_summary" in output
+    assert "YAML: ncbi:gene_summary:2026-06-17" in output
+    assert "Derived: no ncbi:gene_summary pin" in output
+    assert "Other ncbi inputs:" in output
+    assert "ncbi:human_gene_info:2026-10-05" in output
+    assert "uniprot:human_idmapping:2026_03" in output
+    assert "Review whether these datasets should share a pin" in output
+    assert "via ifx_harmonizers:targets:2.4.0" in output
+    assert "Pin consistency: 2 matches · 0 mismatches · " in output
+    assert "2 same-source dataset reviews · 0 unchecked derived roots" in output
+
+
+def test_shared_source_mismatch_makes_current_freshness_report_fail(
+    monkeypatch, capsys
+) -> None:
+    direct = SnapshotRef.source("example:records:1")
+    derived = SnapshotRef.derived("example:derived:1")
+    report = SimpleNamespace(
+        roots=(direct, derived),
+        entries=(
+            SimpleNamespace(
+                reference=direct,
+                disposition=AuditDisposition.CURRENT,
+                dependencies=(),
+                caveats=(),
+            ),
+            SimpleNamespace(
+                reference=SnapshotRef.source("example:records:2"),
+                disposition=AuditDisposition.CURRENT,
+                dependencies=(),
+                caveats=(),
+            ),
+            SimpleNamespace(
+                reference=derived,
+                disposition=AuditDisposition.CURRENT,
+                dependencies=(SnapshotRef.source("example:records:2"),),
+                caveats=(),
+            ),
+        ),
+        is_current=True,
+    )
+    monkeypatch.setattr(
+        audit_registry_freshness, "audit_build_yaml", lambda *args, **kwargs: report
+    )
+
+    assert audit_registry_freshness.main(["build.yaml"]) == 1
+    output = capsys.readouterr().out
+    assert "MISMATCH: example:records" in output
+    assert "YAML: example:records:1" in output
+    assert "Derived: example:records:2" in output
+
+
+def test_same_source_different_dataset_is_review_not_pin_conflict(
+    monkeypatch, capsys
+) -> None:
+    direct = SnapshotRef.source("example:records:1")
+    other = SnapshotRef.source("example:other_records:2")
+    derived = SnapshotRef.derived("example:derived:1")
+    report = SimpleNamespace(
+        roots=(direct, derived),
+        entries=(
+            SimpleNamespace(
+                reference=direct,
+                disposition=AuditDisposition.CURRENT,
+                dependencies=(),
+                caveats=(),
+            ),
+            SimpleNamespace(
+                reference=other,
+                disposition=AuditDisposition.CURRENT,
+                dependencies=(),
+                caveats=(),
+            ),
+            SimpleNamespace(
+                reference=derived,
+                disposition=AuditDisposition.CURRENT,
+                dependencies=(other,),
+                caveats=(),
+            ),
+        ),
+        is_current=True,
+    )
+    monkeypatch.setattr(
+        audit_registry_freshness, "audit_build_yaml", lambda *args, **kwargs: report
+    )
+
+    assert audit_registry_freshness.main(["build.yaml"]) == 0
+    output = capsys.readouterr().out
+    assert "REVIEW (same source, different datasets): example:records" in output
+    assert "Derived: no example:records pin" in output
+    assert "example:other_records:2" in output
+
+
+def test_shared_source_report_handles_unavailable_derived_dependencies() -> None:
+    direct = SnapshotRef.source("uniprot:human:2026_02")
+    derived = SnapshotRef.derived("example:missing:1")
+    report = SimpleNamespace(roots=(direct, derived), entries=(), is_current=False)
+
+    assert audit_registry_freshness.compare_shared_source_pins(report) == ()
+    assert audit_registry_freshness._unchecked_derived_roots(report) == (derived,)
+
+
+def test_nested_missing_lineage_is_reported_as_unchecked(capsys) -> None:
+    direct = SnapshotRef.source("uniprot:human:2026_02")
+    derived = SnapshotRef.derived("example:output:1")
+    missing = SnapshotRef.derived("example:missing:1")
+    report = SimpleNamespace(
+        roots=(direct, derived),
+        entries=(
+            SimpleNamespace(
+                reference=direct,
+                disposition=AuditDisposition.CURRENT,
+                dependencies=(),
+                caveats=(),
+            ),
+            SimpleNamespace(
+                reference=derived,
+                disposition=AuditDisposition.BLOCKED,
+                dependencies=(missing,),
+                reason="Missing dependency",
+                caveats=(),
+            ),
+        ),
+        is_current=False,
+    )
+
+    audit_registry_freshness.print_report(report, "build.yaml")
+
+    output = capsys.readouterr().out
+    assert "Shared source pins cannot be fully checked" in output
+    assert "UNCHECKED dependency lineage: example:output:1" in output
+    assert "Pin consistency: 0 matches · 0 mismatches · " in output
+    assert "0 same-source dataset reviews · 1 unchecked derived roots" in output
+
+
+def test_unchecked_lineage_prevents_a_successful_audit(monkeypatch) -> None:
+    derived = SnapshotRef.derived("example:output:1")
+    report = SimpleNamespace(
+        roots=(derived,),
+        entries=(
+            SimpleNamespace(
+                reference=derived,
+                disposition=AuditDisposition.CURRENT,
+                dependencies=(),
+                caveats=(),
+            ),
+        ),
+        is_current=True,
+    )
+    monkeypatch.setattr(
+        audit_registry_freshness, "audit_build_yaml", lambda *args, **kwargs: report
+    )
+
+    assert audit_registry_freshness.main(["build.yaml"]) == 1

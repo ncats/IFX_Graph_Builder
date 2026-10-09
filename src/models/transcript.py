@@ -1,5 +1,5 @@
-from dataclasses import dataclass
-from typing import Dict, Optional
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional
 
 from src.core.decorators import facets
 from src.models.gene import Gene, Audited
@@ -40,9 +40,22 @@ class Transcript(Audited, Node):
     RefSeq_Provenance: Optional[str] = None
 
 @dataclass
+class ParentLinkDetail:
+    resolution_source: str
+    confidence: str
+
+    def to_dict(self) -> Dict[str, str]:
+        return {
+            "resolution_source": self.resolution_source,
+            "confidence": self.confidence,
+        }
+
+
+@dataclass
 class GeneTranscriptEdge(Relationship, Audited):
     start_node: Gene = None
     end_node: Transcript = None
+    details: List[ParentLinkDetail] = field(default_factory=list)
 
 @dataclass
 class TranscriptProteinEdge(Relationship, Audited):
@@ -53,6 +66,7 @@ class TranscriptProteinEdge(Relationship, Audited):
 class GeneProteinEdge(Relationship, Audited):
     start_node: Gene = None
     end_node: Protein = None
+    details: List[ParentLinkDetail] = field(default_factory=list)
 
 @dataclass
 class IsoformProteinEdge(Relationship, Audited):
