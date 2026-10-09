@@ -129,13 +129,49 @@ def hierarchy(reader, term_collection, edge_collection, *, parent_first=True):
     return terms, ancestors
 
 
+def retained_hmdb_ontology_terms(terms, policy, source_policy='legacy'):
+    """Select Source terms by policy and other HMDB leaves/health intermediates."""
+    if source_policy not in {'legacy', 'expanded'}:
+        raise ValueError(f'Unknown HMDB Source ontology policy: {source_policy}')
+    denylist = policy['denylist']
+    source_allowlist = set(policy['allowlist']['Source'])
+    if not source_allowlist:
+        raise ValueError('HMDB Source ontology allowlist must not be empty')
+    return {tid: term for tid, term in terms.items()
+            if ((term.get('ontology_type') == 'Source'
+                 and term['name'] != 'Source'
+                 and (source_policy == 'expanded' or term['name'] in source_allowlist))
+                or (term.get('ontology_type') != 'Source'
+                    and (term.get('term_type') == 'child'
+                         or (term.get('ontology_type') == 'Health condition'
+                             and term.get('term_type') == 'parent'))))
+            and term['name'] != term.get('ontology_type')
+            and term['name'] not in denylist.get(term.get('ontology_type'), [])}
+
+
 class Projection:
-    def __init__(self, reader, writer, ontology_policy, gene_identity, progress=print, *, protein_annotations=None):
+    def __init__(self, reader, writer, ontology_policy, gene_identity, progress=print, *,
+                 protein_annotations=None, pathway_association_cutoff=25000,
+                 include_lipidmaps_class_level4=False, source_ontology_policy='legacy'):
         from src.use_cases.ramp.sqlite_protein_annotations import ProteinAnnotations
+        if isinstance(pathway_association_cutoff, bool) or not isinstance(pathway_association_cutoff, int) or pathway_association_cutoff < 0:
+            raise ValueError('pathway_association_cutoff must be a nonnegative integer')
+        if source_ontology_policy not in {'legacy', 'expanded'}:
+            raise ValueError(f'Unknown HMDB Source ontology policy: {source_ontology_policy}')
         self.protein_annotations = protein_annotations or ProteinAnnotations()
+        self.pathway_association_cutoff = pathway_association_cutoff
+        self.include_lipidmaps_class_level4 = include_lipidmaps_class_level4
+        self.lipidmaps_class_level4_assertions_excluded = 0
+        self.cofactor_chemical_id_count = 0
+        self.cofactor_role_count = 0
+        self.cofactor_reaction_assertions = 0
+        self.non_un_protein_assertions_excluded = 0
+        self.pathway_source_ids_at_cutoff = 0
+        self.pathway_assertions_excluded = 0
         self.hmdb_status_manifest = {}
         self.reader, self.writer = reader, writer
         self.ontology_policy = ontology_policy
+        self.source_ontology_policy = source_ontology_policy
         self.progress = progress
         self.gene_identity = gene_identity
         self.metabolites = {}
@@ -155,13 +191,21 @@ class Projection:
             self.progress('Writing gene/protein lookup identities')
             self.write_genes()
             self.progress('Writing pathways and their analyte associations')
-            self.write_pathways(include_catalyzed=False)
+            self.write_pathways()
+            self.progress('Writing catalyzed metabolite–gene associations')
+            self.write_catalyzed()
+            self.progress('Writing metabolite classifications')
+            self.write_classifications(include_ontology=False)
+            self.progress('Writing reactions and their participants')
+            self.write_reactions()
             self.progress('Writing ontology and its metabolite associations')
             self.write_ontology()
             self.progress('Writing association lookup identities')
             self.write_source_associations(skip_collections={
                 'MetabolitePathwayEdge', 'GenePathwayEdge', 'ProteinPathwayEdge',
-                'HmdbMetaboliteOntologyEdge'})
+                'HmdbMetaboliteOntologyEdge', 'HmdbMetaboliteProteinAssociationEdge',
+                'MetaboliteClassificationEdge', 'RheaMetaboliteReactionEdge',
+                'RheaProteinReactionEdge'})
             self.progress('Finalizing source lookup rows')
             self.source_rows.finish()
             self.write_metabolite_analytes()
@@ -169,6 +213,7 @@ class Projection:
         for name, step in [("metabolites and chemistry", self.write_metabolites),
                            ("gene and protein identifiers", self.write_genes),
                            ("pathways and associations", self.write_pathways),
+                           ("catalyzed metabolite–gene associations", self.write_catalyzed),
                            ("classifications and ontology", self.write_classifications),
                            ("reactions", self.write_reactions)]:
             self.progress(f"Writing {name}")
@@ -187,9 +232,8 @@ class Projection:
         """Read only the association evidence needed for source lookup rows."""
         ontology_terms, ontology_ancestors = hierarchy(
             self.reader, 'HmdbOntologyTerm', 'HmdbOntologyParentEdge')
-        retained_ontology_terms = {tid for tid, term in ontology_terms.items()
-                                   if term.get('term_type') == 'child'
-                                   and term['name'] not in self.ontology_policy.get(term.get('ontology_type'), [])}
+        retained_ontology_terms = retained_hmdb_ontology_terms(
+            ontology_terms, self.ontology_policy, self.source_ontology_policy)
         for collection, kind, node_type in (
                 ('MetabolitePathwayEdge', 'compound', None),
                 ('HmdbMetaboliteOntologyEdge', 'compound', None),
@@ -419,7 +463,20 @@ class Projection:
                     if alias.startswith('HGNC.SYMBOL:'):
                         self.write_synonym(alias.split(':', 1)[1], rid, 'gene', 'uniprot')
 
-    def write_pathways(self, *, include_catalyzed=True):
+    def write_pathways(self):
+        excluded_pathway_sources = set()
+        if self.pathway_association_cutoff:
+            assertion_counts = defaultdict(int)
+            for collection, kind in (('MetabolitePathwayEdge', 'compound'),
+                                     ('GenePathwayEdge', 'gene'),
+                                     ('ProteinPathwayEdge', 'gene')):
+                for edge in self.reader.records(collection):
+                    for src, raw, _ in evidence(collection, edge):
+                        assertion_counts[(kind, provider(src), raw)] += 1
+            excluded_pathway_sources = {
+                key for key, count in assertion_counts.items()
+                if count >= self.pathway_association_cutoff}
+        self.pathway_source_ids_at_cutoff = len(excluded_pathway_sources)
         index = 0
         for doc in self.reader.records("PathwayIdentifier"):
             for src in sources(doc):
@@ -442,14 +499,23 @@ class Projection:
                     self.skipped[collection] += 1
                     continue
                 assertions = self.register_edge(collection, edge, rid, 'gene' if node_type else 'compound')
-                for src in sorted({provider(src) for src, _, _ in assertions}):
+                pathways_by_src = {}
+                for src in {provider(src) for src, _, _ in assertions}:
                     pathway = self.pathways.get((pid, src))
                     if not pathway:
                         raise ValueError(f"Missing provider pathway: {pid}, {src}")
+                    pathways_by_src[src] = pathway
+                if excluded_pathway_sources:
+                    kind = 'gene' if node_type else 'compound'
+                    retained = [(src, raw, detail) for src, raw, detail in assertions
+                                if (kind, provider(src), raw) not in excluded_pathway_sources]
+                    self.pathway_assertions_excluded += len(assertions) - len(retained)
+                    assertions = retained
+                for src in sorted({provider(src) for src, _, _ in assertions}):
+                    pathway = pathways_by_src[src]
                     self.writer.add("analytehaspathway", rampId=rid, pathwayRampId=pathway,
                                     pathwaySource=self.pathway_sources[pathway])
-        if not include_catalyzed:
-            return
+    def write_catalyzed(self):
         catalyzed_types = defaultdict(set)
         for edge in self.reader.records("HmdbMetaboliteProteinAssociationEdge"):
             met = self.metabolites.get(edge["start_id"])
@@ -468,7 +534,7 @@ class Projection:
             self.writer.add("catalyzed", rampCompoundId=met, rampGeneId=gene,
                             proteinType='; '.join(sorted(types)))
 
-    def write_classifications(self):
+    def write_classifications(self, *, include_ontology=True):
         terms, ancestors = hierarchy(self.reader, "MetaboliteClassificationTerm", "MetaboliteClassificationParentEdge")
         for edge in self.reader.records("MetaboliteClassificationEdge"):
             rid = self.metabolites.get(edge["start_id"])
@@ -478,14 +544,20 @@ class Projection:
             for src, raw, detail in self.register_edge('MetaboliteClassificationEdge', edge, rid, 'compound'):
                 for tid in ancestors(edge["end_id"]):
                     term = terms[tid]
+                    if (not self.include_lipidmaps_class_level4
+                            and provider(src) == 'lipidmaps'
+                            and term['level_name'] == 'LipidMaps_class_level4'):
+                        self.lipidmaps_class_level4_assertions_excluded += 1
+                        continue
                     self.writer.add("metabolite_class", ramp_id=rid, class_source_id=source_id(raw),
                         class_level_name=term["level_name"], class_name=term["name"], source=provider(src))
-        self.write_ontology()
+        if include_ontology:
+            self.write_ontology()
 
     def write_ontology(self):
         terms, ancestors = hierarchy(self.reader, "HmdbOntologyTerm", "HmdbOntologyParentEdge")
-        allowed = {tid: t for tid, t in terms.items() if t.get("term_type") == "child"
-                   and t["name"] not in self.ontology_policy.get(t.get("ontology_type"), [])}
+        allowed = retained_hmdb_ontology_terms(terms, self.ontology_policy,
+                                               self.source_ontology_policy)
         ids = {tid: f"RAMP_OL_{i:09d}" for i, tid in enumerate(sorted(allowed), 1)}
         for tid, term in sorted(allowed.items()):
             self.writer.add("ontology", rampOntologyId=ids[tid], commonName=term["name"],
@@ -503,6 +575,10 @@ class Projection:
                 self.writer.add("analytehasontology", rampCompoundId=rid, rampOntologyId=ids[tid])
 
     def write_reactions(self):
+        from src.use_cases.ramp.sqlite_chebi_cofactors import cofactor_chemical_ids
+        cofactor_ids, cofactor_roles = cofactor_chemical_ids(self.reader)
+        self.cofactor_chemical_id_count = len(cofactor_ids)
+        self.cofactor_role_count = len(cofactor_roles)
         reactions = {d["id"]: d for d in self.reader.records("RheaReaction")}
         ids = {rid: f"RAMP_R_{i:09d}" for i, rid in enumerate(sorted(reactions), 1)}
         classes, ancestors = hierarchy(self.reader, "RheaReactionClass", "RheaReactionClassParentEdge", parent_first=False)
@@ -529,25 +605,32 @@ class Projection:
                 continue
             rxn = edge["end_id"]
             _, raw, _ = self.register_edge('RheaMetaboliteReactionEdge', edge, rid, 'compound')[0]
+            is_cofactor = int(raw in cofactor_ids)
+            self.cofactor_reaction_assertions += is_cofactor
             self.writer.add("reaction2met", ramp_rxn_id=ids[rxn], rxn_source_id=source_id(rxn), ramp_cmpd_id=rid,
                 substrate_product={"left": 0, "right": 1}[edge["side"]], met_source_id=source_id(raw),
-                met_name=edge.get("name"), is_cofactor=int(edge["is_cofactor"]) if edge.get("is_cofactor") is not None else -1)
+                met_name=edge.get("name"), is_cofactor=is_cofactor)
         for edge in self.reader.records("RheaProteinReactionEdge"):
             pid, rxn = edge["start_id"], edge["end_id"]
             doc = self.proteins[pid]
             _, raw, _ = self.register_edge('RheaProteinReactionEdge', edge, self.genes[("ProteinIdentifier", pid)], 'gene')[0]
+            if reactions[rxn]["direction"] != "UN":
+                self.non_un_protein_assertions_excluded += 1
+                continue
             self.writer.add("reaction2protein", ramp_rxn_id=ids[rxn], rxn_source_id=source_id(rxn),
                 ramp_gene_id=self.genes[("ProteinIdentifier", pid)], uniprot=source_id(raw),
                 protein_name=doc.get("name") or doc.get("gene_name") or source_id(pid),
                 is_reviewed=int(doc["is_reviewed"]) if doc.get("is_reviewed") is not None else -1)
 
 
-def write_versions(writer, reader, release_version, timestamp, *, kegg_via_hmdb=False):
+def write_versions(writer, reader, release_version, timestamp, *, kegg_via_hmdb=False,
+                   include_db_version=True):
     from src.use_cases.ramp.sqlite_version_metadata import display_metadata
-    writer.add("db_version", ramp_version=release_version, load_timestamp=timestamp,
-        version_notes="Base tables only; post-processing pending. See ramp_export_metadata.",
-        met_intersects_json=None, gene_intersects_json=None, met_intersects_json_pw_mapped=None,
-        gene_intersects_json_pw_mapped=None, db_sql_url=None)
+    if include_db_version:
+        writer.add("db_version", ramp_version=release_version, load_timestamp=timestamp,
+            version_notes="Base tables only; post-processing pending. See ramp_export_metadata.",
+            met_intersects_json=None, gene_intersects_json=None, met_intersects_json_pw_mapped=None,
+            gene_intersects_json_pw_mapped=None, db_sql_url=None)
     by_source = defaultdict(list)
     for dataset in reader.metadata["registry_datasets"]:
         by_source[dataset["source"]].append(dataset)

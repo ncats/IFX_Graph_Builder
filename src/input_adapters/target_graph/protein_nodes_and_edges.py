@@ -6,7 +6,7 @@ from src.models.gene import Gene
 from src.models.node import Node, Relationship, EquivalentId
 from src.models.protein import Protein
 from src.models.transcript import TranscriptProteinEdge, Transcript, GeneProteinEdge, \
-    IsoformProteinEdge
+    IsoformProteinEdge, ParentLinkDetail
 
 from src.shared.targetgraph_parser import TargetGraphProteinParser
 
@@ -42,7 +42,7 @@ class TGProteinFileBase(TargetGraphProteinParser):
         protein_obj.mapping_ratio = TargetGraphProteinParser.get_mapping_ratio(line)
         return protein_obj
 
-    def get_all_combined(self, reviewed_only = False, canonical_only = False):
+    def get_all_combined(self, reviewed_only=False, canonical_only=False):
         protein_list = []
         transcript_relationships = []
         gene_relationships = []
@@ -68,15 +68,28 @@ class TGProteinFileBase(TargetGraphProteinParser):
                     )
                 )
 
-            gene_ncbi_id = TargetGraphProteinParser.get_gene_id(line)
-            if gene_ncbi_id:
-                gene_id = EquivalentId(id=gene_ncbi_id, type=Prefix.NCBIGene)
+            parent_id = TargetGraphProteinParser.get_parent_gene_id(line)
+            if 'parent_ifx_gene_id' in self.fieldnames:
+                gene_id = parent_id
+                details = []
+                if parent_id:
+                    details = [ParentLinkDetail(
+                        resolution_source=line['parent_resolution_source'],
+                        confidence=line['parent_confidence'],
+                    )]
+            else:
+                ncbi_ids = TargetGraphProteinParser.get_gene_id(line)
+                gene_id = (EquivalentId(id=ncbi_ids, type=Prefix.NCBIGene).id_str()
+                           if ncbi_ids else None)
+                details = []
+            if gene_id:
                 gene_relationships.append(
                     GeneProteinEdge(
-                        start_node=Gene(id=gene_id.id_str()),
+                        start_node=Gene(id=gene_id),
                         end_node=protein_obj,
                         created=protein_obj.created,
-                        updated=protein_obj.updated
+                        updated=protein_obj.updated,
+                        details=details,
                     )
                 )
             protein_list.append(protein_obj)
@@ -106,14 +119,10 @@ class ProteinNodeAdapter(InputAdapter, TGProteinFileBase):
     def get_version(self) -> DatasourceVersionInfo:
         return self.version_info
 
-    def __init__(self, data_source, additional_ids_data_source=None,
-                 reviewed_only = False, canonical_only = False):
+    def __init__(self, data_source, reviewed_only=False, canonical_only=False):
         self.version_info = data_source.version_info()
         file_path = str(data_source.file("protein_ids.tsv"))
-        additional_id_file_path = None
-        if additional_ids_data_source is not None:
-            additional_id_file_path = str(additional_ids_data_source.file("uniprotkb_mapping_20260507.csv"))
-        TGProteinFileBase.__init__(self, file_path=file_path, additional_id_file_path=additional_id_file_path)
+        TGProteinFileBase.__init__(self, file_path=file_path)
         self.canonical_only = canonical_only
         self.reviewed_only = reviewed_only
 
@@ -124,13 +133,10 @@ class ProteinNodeAdapter(InputAdapter, TGProteinFileBase):
 
 class ProteinEdgeAdapter(InputAdapter, TGProteinFileBase):
 
-    def __init__(self, data_source, additional_ids_data_source=None):
+    def __init__(self, data_source):
         self.version_info = data_source.version_info()
         file_path = str(data_source.file("protein_ids.tsv"))
-        additional_id_file_path = None
-        if additional_ids_data_source is not None:
-            additional_id_file_path = str(additional_ids_data_source.file("uniprotkb_mapping_20260507.csv"))
-        TGProteinFileBase.__init__(self, file_path=file_path, additional_id_file_path=additional_id_file_path)
+        TGProteinFileBase.__init__(self, file_path=file_path)
 
     def get_datasource_name(self) -> DataSourceName:
         return DataSourceName.TargetGraph

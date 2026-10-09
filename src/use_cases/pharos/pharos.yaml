@@ -19,10 +19,9 @@ resolvers:
     import: ./src/id_resolvers/target_graph_resolver.py
     class: TCRDTargetResolver
     kwargs:
-      gene_data_source: target_graph:gene_ids:2026-05-11
-      transcript_data_source: target_graph:transcript_ids:2026-05-11
-      protein_data_source: target_graph:protein_ids:2026-05-20
-      uniprot_mapping_data_source: target_graph:uniprot_mapping:2026-05-11
+      gene_data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.4.0}
+      transcript_data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.4.0}
+      protein_data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.4.0}
       collapse_to_canonical: true
       canonical_type: Protein
       types:
@@ -35,7 +34,7 @@ resolvers:
     import: ./src/id_resolvers/hcop_ortholog_gene_resolver.py
     class: HCOPOrthologGeneResolver
     kwargs:
-      data_source: hcop:human_all_sixteen_column:2025-05-16
+      data_source: hcop:human_all_sixteen_column:2026-10-01
       accepted_species: ["9598", "9544", "10090", "10116", "9615", "9796", "9913", "9823", "13616", "9258", "9031", "28377", "8364", "7955", "6239", "7227", "4932"]
       drop_blank_ortholog_identity: true
       types:
@@ -45,7 +44,7 @@ resolvers:
     import: ./src/id_resolvers/tissue_resolver.py
     class: TissueResolver
     kwargs:
-      data_source: uberon:ontology:2026-04-01
+      data_source: uberon:ontology:2026-10-01
       valid_ontologies: ["FMA", "EMAPA", "MA", "UMLS", "NCIT", "ZFA", "BTO", "CLDB", "EHDAA2", "BAMS", "neuronames", "VHOG", "MESH", "BIRNLEX", "TAO", "EHDAA", "GAID", "DHBA", "CALOHA", "EFO", "XAO", "HBA", "OpenCyc", "MBA", "galen", "FBbt", "GC_ID", "EV", "DMBA", "BM", "MAT", "MIAA", "NLXANAT", "VSAO", "AEO", "RETIRED_EHDAA2", "KUPO", "Wikipedia", "NLX", "ZFS", "UBERONTEMP", "UBERON", "TGMA", "TE", "TADS", "STID", "SPD", "SCTID", "SAO", "PHENOSCAPE", "PBA", "OGES", "OGEM", "NOID", "NIFSTD", "MURDOCH", "MPATH", "MP", "MFMO", "MAP", "ISBN", "HAO", "GOC", "GO", "FMAID", "FAO", "EVM", "ENVO", "EMAPS", "EHDA", "CP", "CL", "CARO", "BSA", "BILS", "BILA", "ANISEED", "ABA", "AAO"]
       types:
         - Tissue
@@ -54,7 +53,7 @@ input_adapters:
   - import: ./src/input_adapters/uberon_adapter.py
     class: UberonAdapter
     kwargs:
-      data_source: uberon:ontology:2026-04-01
+      data_source: uberon:ontology:2026-10-01
 
   # TODO: Evaluate GOTermAdapter consuming go.obo from the expanded go:ontology
   # bundle instead of go-basic.json, so Registry can eventually keep one format.
@@ -63,18 +62,18 @@ input_adapters:
   - import: ./src/input_adapters/go/go_term.py
     class: GOTermAdapter
     kwargs:
-      data_source: go:ontology:2026-01-23
+      data_source: go:ontology:2026-07-26-bundle1
 
   - import: ./src/input_adapters/target_graph/protein_nodes_and_edges.py
     class: ProteinNodeAdapter
     kwargs:
-      data_source: target_graph:protein_ids:2026-05-20
+      data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.4.0}
       canonical_only: true
 
   - import: ./src/input_adapters/file_uniprot/protein_adapter.py
     class: ProteinAdapter
     kwargs:
-      data_source: uniprot:human:2026_02
+      data_source: uniprot:human:2026_03
       file_name: uniprot-human-reviewed.json.gz
 
   - import: ./src/input_adapters/pharos_mysql/phipster_adapter.py
@@ -86,7 +85,7 @@ input_adapters:
   - import: ./src/input_adapters/hcop/orthologs.py
     class: HCOPOrthologAdapter
     kwargs:
-      data_source: hcop:human_all_sixteen_column:2025-05-16
+      data_source: hcop:human_all_sixteen_column:2026-10-01
       accepted_species:
         - "9598"
         - "9544"
@@ -110,7 +109,7 @@ input_adapters:
   - import: ./src/input_adapters/mp/phenotype_terms.py
     class: MPPhenotypeAdapter
     kwargs:
-      data_source: mp:ontology:2026-05-19
+      data_source: mp:ontology:2026-09-23
 
   - import: ./src/input_adapters/impc/phenotypes.py
     class: IMPCPhenotypeAdapter
@@ -120,12 +119,12 @@ input_adapters:
   - import: ./src/input_adapters/mgi/hmd_human_phenotype.py
     class: HMDHumanPhenotypeAdapter
     kwargs:
-      data_source: mgi:hmd_human_phenotype:2026-06-15
+      data_source: mgi:hmd_human_phenotype:2026-10-05
 
   - import: ./src/input_adapters/string/string_ppi.py
     class: StringPPIAdapter
     kwargs:
-      data_source: string:protein_links_human:12.0
+      data_source: string:protein_links_human:12.5
       score_cutoff: 400
 
   - import: ./src/input_adapters/bioplex/bioplex_ppi.py
@@ -136,7 +135,7 @@ input_adapters:
   - import: ./src/input_adapters/reactome/reactome_ppi.py
     class: ReactomePPIAdapter
     kwargs:
-      data_source: reactome:pathways:96
+      data_source: reactome:pathways:97-bundle1
 
   - import: ./src/input_adapters/gtex/gtex_expression.py
     class: GTExExpressionAdapter
@@ -161,76 +160,63 @@ input_adapters:
       data_source: hpa:tissue_expression:25.1
       uberon_map_file_path: ./src/input_adapters/shared/manual_uberon_map.tsv
 
-  # TODO: Migrate DrugCentral adapters from SQL to the published Registry snapshot
-  # drugcentral:drug_exports:56-export1 (database release 56; export schema 1).
-  # DrugNodeAdapter: read drugcentral_structures.smiles.tsv (ID, DRUG_NAME, SMILES).
-  # See export_contract.json and export_queries.sql in that snapshot for the contract.
-  # Keep the existing external pin/credentials until the file adapters are implemented.
+  # DrugCentral release 56, export schema 1; all three adapters share this snapshot.
   - import: ./src/input_adapters/drug_central/drug_node.py
     class: DrugNodeAdapter
     kwargs:
-      data_source: {kind: external_dataset_version, snapshot_id: drugcentral:drug_database:54}
-    credentials: ./src/use_cases/secrets/drugcentral_credentials.yaml
+      data_source: {kind: source_snapshot, snapshot_id: drugcentral:drug_exports:56-export1}
 
-  # TODO: Read drugcentral_drug_target_interaction.tsv.gz from
-  # drugcentral:drug_exports:56-export1; human rows with nonblank accessions.
-  # Preserve distinct-row handling, accession splitting, and activity-detail grouping.
   - import: ./src/input_adapters/drug_central/protein_drug_edge.py
     class: ProteinDrugEdgeAdapter
     kwargs:
-      data_source: {kind: external_dataset_version, snapshot_id: drugcentral:drug_database:54}
-    credentials: ./src/use_cases/secrets/drugcentral_credentials.yaml
+      data_source: {kind: source_snapshot, snapshot_id: drugcentral:drug_exports:56-export1}
 
   - import: ./src/input_adapters/iuphar/ligand_node.py
     class: LigandNodeAdapter
     kwargs:
-      data_source: iuphar:ligands_interactions:2026-04-27
+      data_source: iuphar:ligands_interactions:2026-09-16
 
   - import: ./src/input_adapters/iuphar/protein_ligand_edge.py
     class: ProteinLigandEdgeAdapter
     kwargs:
       pchembl_cutoff: *pchembl_cutoff
-      data_source: iuphar:ligands_interactions:2026-04-27
+      data_source: iuphar:ligands_interactions:2026-09-16
 
   - import: ./src/input_adapters/chembl/drug_node.py
     class: DrugNodeAdapter
     kwargs:
-      data_source: {kind: external_dataset_version, snapshot_id: chembl:activity_database:chembl36}
+      data_source: {kind: external_dataset_version, snapshot_id: chembl:activity_database:chembl37}
       pchembl_cutoff: *pchembl_cutoff
     credentials: ./src/use_cases/secrets/chembl_credentials.yaml
 
   - import: ./src/input_adapters/chembl/drug_node.py
     class: ProteinDrugEdgeAdapter
     kwargs:
-      data_source: {kind: external_dataset_version, snapshot_id: chembl:activity_database:chembl36}
+      data_source: {kind: external_dataset_version, snapshot_id: chembl:activity_database:chembl37}
       pchembl_cutoff: *pchembl_cutoff
     credentials: ./src/use_cases/secrets/chembl_credentials.yaml
 
-  # TODO: Read drugcentral_indications.tsv from drugcentral:drug_exports:56-export1
-  # and join STRUCT_ID to the shared structures and interaction exports.
-  # Keep protein-disease edge construction and deduplication in this adapter.
   - import: ./src/input_adapters/drug_central/drug_indication.py
     class: DrugCentralIndicationAdapter
     kwargs:
-      data_source: {kind: external_dataset_version, snapshot_id: drugcentral:drug_database:54}
-    credentials: ./src/use_cases/secrets/drugcentral_credentials.yaml
+      data_source: {kind: source_snapshot, snapshot_id: drugcentral:drug_exports:56-export1}
 
   - import: ./src/input_adapters/jensenlab/total_pmscore.py
     class: TotalPMScoreAdapter
     kwargs:
-      data_source: jensenlab:protein_counts:2026-03-10-recovered
+      data_source: jensenlab:protein_counts:2026-10-04
 
   - import: ./src/input_adapters/pubtator/publication_statistics.py
     class: PubTatorPublicationStatisticsAdapter
     kwargs:
-      data_source: pubtator:gene2pubtator3:2026-05-17
+      data_source: pubtator:gene2pubtator3:2026-10-06
     credentials: ./src/use_cases/secrets/ifx_pubmed_credentials.yaml
 
   - import: ./src/input_adapters/jensenlab/tissues_expression.py
     class: JensenLabTissuesExpressionAdapter
     kwargs:
-      data_source: jensenlab:tissues:2026-06-15
-      obo_data_source: uberon:ontology:2026-04-01
+      data_source: jensenlab:tissues:2026-10-05
+      obo_data_source: uberon:ontology:2026-10-01
 
   - import: ./src/input_adapters/antibodypedia/antibody_count.py
     class: AntibodyCountAdapter
@@ -240,34 +226,34 @@ input_adapters:
   - import: ./src/input_adapters/go/go_gaf.py
     class: ProteinGoTermEdgeAdapter
     kwargs:
-      data_source: go:goa_human_uniprot:2025-12-04
+      data_source: go:goa_human_uniprot:2026-07-28
       source: UniProt
 
   - import: ./src/input_adapters/go/go_gaf.py
     class: ProteinGoTermEdgeAdapter
     kwargs:
-      data_source: go:goa_human_go:2026-03-25
+      data_source: go:goa_human_go:2026-05-28
       source: GO
 
   - import: ./src/input_adapters/mondo/mondo_adapter.py
     class: MondoDiseaseAdapter
     kwargs:
-      data_source: mondo:ontology:2026-06-02
+      data_source: mondo:ontology:2026-10-06
 
   - import: ./src/input_adapters/mondo/mondo_adapter.py
     class: MondoDiseaseParentEdgeAdapter
     kwargs:
-      data_source: mondo:ontology:2026-06-02
+      data_source: mondo:ontology:2026-10-06
 
   - import: ./src/input_adapters/disease_ontology/do_adapter.py
     class: DODiseaseAdapter
     kwargs:
-      data_source: disease_ontology:ontology:2026-05-30
+      data_source: disease_ontology:ontology:2026-09-30
 
   - import: ./src/input_adapters/disease_ontology/do_adapter.py
     class: DODiseaseParentEdgeAdapter
     kwargs:
-      data_source: disease_ontology:ontology:2026-05-30
+      data_source: disease_ontology:ontology:2026-09-30
 
   - import: ./src/input_adapters/rdas/diseases.py
     class: RDASRareDiseaseAdapter
@@ -277,7 +263,7 @@ input_adapters:
   - import: ./src/input_adapters/jensenlab/diseases.py
     class: JensenLabDiseasesAdapter
     kwargs:
-      data_source: jensenlab:diseases:2026-06-14
+      data_source: jensenlab:diseases:2026-10-04
       textmining_min_zscore: 6.0
 
   - import: ./src/input_adapters/pharos_mysql/eram_disease_adapter.py
@@ -289,59 +275,59 @@ input_adapters:
   - import: ./src/input_adapters/file_uniprot/protein_adapter.py
     class: ProteinDiseaseEdgeAdapter
     kwargs:
-      data_source: uniprot:human:2026_02
+      data_source: uniprot:human:2026_03
       file_name: uniprot-human-reviewed.json.gz
 
   - import: ./src/input_adapters/ctd/ctd_gene_disease.py
     class: CTDGeneDiseaseAdapter
     kwargs:
-      data_source: ctd:curated_genes_diseases:2026-05-28
+      data_source: ctd:curated_genes_diseases:2026-09-29
 
   - import: ./src/input_adapters/jensenlab/tinx.py
     class: TINXAdapter
     kwargs:
-      data_source: jensenlab:tinx:2026-06-14
+      data_source: jensenlab:tinx:2026-10-04
 
   - import: ./src/input_adapters/tiga/tiga.py
     class: TIGAAdapter
     kwargs:
-      data_source: tiga:gene_trait:20260120
+      data_source: tiga:gene_trait:20260720
 
   - import: ./src/input_adapters/pharos_linkouts/linkouts.py
     class: PharosExternalLinkAdapter
     kwargs:
-      protein_data_source: target_graph:protein_ids:2026-05-20
+      protein_data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.4.0}
       glygen_data_source: glygen:proteins:0a30c984d41c68500790b376e3644145
       dark_kinome_data_source: dark_kinome:kinases:2026-06-10
       resolute_data_source: resolute:genes:2026-06-10
       linkedomics_data_source: linkedomics:genes:2026-06-10
-      tiga_data_source: tiga:gene_trait:20260120
+      tiga_data_source: tiga:gene_trait:20260720
       canonical_only: true
 
   - import: ./src/input_adapters/reactome/reactome_pathways.py
     class: ReactomePathwayAdapter
     kwargs:
-      data_source: reactome:pathways:96
+      data_source: reactome:pathways:97-bundle1
 
   - import: ./src/input_adapters/reactome/reactome_pathways.py
     class: ReactomePathwayParentEdgeAdapter
     kwargs:
-      data_source: reactome:pathways:96
+      data_source: reactome:pathways:97-bundle1
 
   - import: ./src/input_adapters/reactome/reactome_pathways.py
     class: ReactomeProteinPathwayEdgeAdapter
     kwargs:
-      data_source: reactome:pathways:96
+      data_source: reactome:pathways:97-bundle1
 
   - import: ./src/input_adapters/wikipathways/wikipathways_pathways.py
     class: WikiPathwaysPathwayAdapter
     kwargs:
-      data_source: wikipathways:human_gmt:2026-06-10
+      data_source: wikipathways:human_gmt:2026-09-10
 
   - import: ./src/input_adapters/wikipathways/wikipathways_pathways.py
     class: WikiPathwaysGenePathwayEdgeAdapter
     kwargs:
-      data_source: wikipathways:human_gmt:2026-06-10
+      data_source: wikipathways:human_gmt:2026-09-10
 
   - import: ./src/input_adapters/pathwaycommons/pathwaycommons_pathways.py
     class: PathwayCommonsPathwayAdapter
@@ -384,12 +370,12 @@ input_adapters:
   - import: ./src/input_adapters/ncbi/publications.py
     class: NCBIPublicationAdapter
     kwargs:
-      data_source: ncbi:publications:2026-06-17
+      data_source: ncbi:publications:2026-10-05
 
   - import: ./src/input_adapters/ncbi/gene_summary.py
     class: NCBIGeneSummaryAdapter
     kwargs:
-      data_source: ncbi:gene_summary:2026-06-17
+      data_source: ncbi:gene_summary:2026-10-05
 
   - import: ./src/input_adapters/pharos_mysql/idg_family_adapter.py
     class: IDGFamilyAdapter
@@ -400,7 +386,7 @@ input_adapters:
   - import: ./src/input_adapters/jensenlab/publications.py
     class: JensenLabPublicationAdapter
     kwargs:
-      data_source: jensenlab:tinx:2026-06-14
+      data_source: jensenlab:tinx:2026-10-04
 
 output_adapters:
   - import: ./src/output_adapters/arango_output_adapter.py

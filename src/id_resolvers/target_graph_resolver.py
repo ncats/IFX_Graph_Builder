@@ -38,14 +38,6 @@ scores = {
 }
 
 
-def _dataset_file(data_source, expected_file_name: str):
-    try:
-        return data_source.file()
-    except ValueError:
-        return data_source.file(expected_file_name)
-
-
-
 class TargetGraphResolver(SqliteCacheResolver):
     name = "TargetGraph Resolver"
 
@@ -81,11 +73,9 @@ class TargetGraphProteinResolver(TargetGraphResolver):
     name = "TargetGraph Protein Resolver"
     parsers: List[TargetGraphProteinParser]
 
-    def __init__(self, data_source, additional_ids_data_source, **kwargs):
+    def __init__(self, data_source, **kwargs):
         file_paths = [str(data_source.file("protein_ids.tsv"))]
-        additional_ids = str(
-            _dataset_file(additional_ids_data_source, "uniprotkb_mapping_20260507.csv")
-        )
+        additional_ids = str(data_source.file("uniprot_mapping.csv"))
         self.parsers = [
             TargetGraphProteinParser(file_path=path, additional_id_file_path=additional_ids)
             for path in file_paths]
@@ -135,7 +125,6 @@ class TCRDTargetResolver(TargetGraphResolver):
         gene_data_source,
         transcript_data_source,
         protein_data_source,
-        uniprot_mapping_data_source,
         reviewed_only: bool = False,
         collapse_to_canonical: bool = False,
         canonical_type: str | None = None,
@@ -144,9 +133,7 @@ class TCRDTargetResolver(TargetGraphResolver):
         gene_file_path = str(gene_data_source.file("gene_ids.tsv"))
         transcript_file_path = str(transcript_data_source.file("transcript_ids.tsv"))
         protein_file_paths = [str(protein_data_source.file("protein_ids.tsv"))]
-        additional_ids = str(
-            _dataset_file(uniprot_mapping_data_source, "uniprotkb_mapping_20260507.csv")
-        )
+        additional_ids = str(protein_data_source.file("uniprot_mapping.csv"))
 
         self.parsers = []
         self.protein_parsers = [
@@ -160,7 +147,7 @@ class TCRDTargetResolver(TargetGraphResolver):
         TargetGraphResolver.__init__(self, canonical_class=_resolve_canonical_class(canonical_type), **kwargs)
 
     def matching_ids(self) -> Generator[MatchingPair, Any, None]:
-        transcript_ids, transcript_id_idx, transcript_gene_map = self.get_transcript_ids()
+        transcript_ids, transcript_id_idx, _ = self.get_transcript_ids()
 
         gene_ids, gene_ids_idx = self.get_gene_ids()
         protein_ids, protein_transcript_map, protein_gene_map = self.get_protein_ids(
@@ -169,7 +156,6 @@ class TCRDTargetResolver(TargetGraphResolver):
 
         missing_transcripts = set()
         missing_genes = set()
-        missing_t_genes = set()
 
         for protein_ifx_id in protein_ids.keys():
             if protein_ifx_id in protein_transcript_map and len(protein_transcript_map[protein_ifx_id]) > 0:
@@ -179,17 +165,6 @@ class TCRDTargetResolver(TargetGraphResolver):
                     else:
                         transcript_ifx_ids = transcript_id_idx[match]
                         for transcript_ifx_id in transcript_ifx_ids:
-                            if transcript_ifx_id in transcript_gene_map:
-                                for gene_alias in transcript_gene_map[transcript_ifx_id]:
-                                    if gene_alias not in gene_ids_idx:
-                                        missing_t_genes.add(gene_alias)
-                                    else:
-                                        gene_ifx_ids = gene_ids_idx[gene_alias]
-                                        for gene_ifx_id in gene_ifx_ids:
-                                            equivalent_ids = gene_ids[gene_ifx_id]
-                                            for gene_alias in equivalent_ids:
-                                                protein_ids[protein_ifx_id].add(MatchingPair(id=protein_ifx_id, match=gene_alias.match, type=gene_alias.type))
-
                             equivalent_ids = transcript_ids[transcript_ifx_id]
                             for transcript_alias in equivalent_ids:
                                 protein_ids[protein_ifx_id].add(MatchingPair(id=protein_ifx_id, match=transcript_alias.match, type=transcript_alias.type))
@@ -213,10 +188,6 @@ class TCRDTargetResolver(TargetGraphResolver):
         for gene in missing_genes:
             print(f"\t{gene}")
 
-        print('missing transcript genes')
-        for gene in missing_t_genes:
-            print(f"\t{gene}")
-
         for p in protein_ids.keys():
             for match in protein_ids[p]:
                 yield match
@@ -237,6 +208,7 @@ class TCRDTargetResolver(TargetGraphResolver):
                     gene_id_idx[equiv_id_str] = set()
                 gene_id_idx[equiv_id_str].add(gene_id)
             gene_map[gene_id] = set(ids)
+            gene_id_idx.setdefault(gene_id, set()).add(gene_id)
 
         return gene_map, gene_id_idx
 
@@ -249,6 +221,8 @@ class TCRDTargetResolver(TargetGraphResolver):
 
         for parser in self.protein_parsers:
             for line in parser.all_rows():
+                if not parser.get_uniprot_id(line):
+                    continue
                 if reviewed_only and not parser.get_uniprot_reviewed(line):
                     continue
                 protein_id = parser.get_id(line)
@@ -284,15 +258,25 @@ class TCRDTargetResolver(TargetGraphResolver):
                 )
 
             transcript_ids = parser.get_transcript_ids(line)
-            gene_id = parser.get_gene_id(line)
+            gene_id = parser.get_parent_gene_id(line)
 
             for transcript_id in transcript_ids:
                 transcript_id_to_use = EquivalentId(id=transcript_id, type=Prefix.ENSEMBL).id_str()
                 protein_transcript_map[target_protein_id].add(transcript_id_to_use)
 
+            # Collapsing an isoform does not make its gene-parent assertion a
+            # parent assertion about the canonical protein.
+            if collapse_to_canonical and not is_canonical:
+                continue
             if gene_id is not None:
-                gene_id_to_use = EquivalentId(id=gene_id, type=Prefix.NCBIGene).id_str()
+                gene_id_to_use = gene_id
                 protein_gene_map[target_protein_id].add(gene_id_to_use)
+            elif 'parent_ifx_gene_id' not in parser.fieldnames:
+                for legacy_gene_id in (parser.get_gene_id(line) or '').split('|'):
+                    if legacy_gene_id:
+                        protein_gene_map[target_protein_id].add(
+                            EquivalentId(id=legacy_gene_id, type=Prefix.NCBIGene).id_str()
+                        )
 
         return protein_ids, protein_transcript_map, protein_gene_map
 
@@ -305,16 +289,22 @@ class TCRDTargetResolver(TargetGraphResolver):
             if transcript_id not in transcript_gene_map:
                 transcript_gene_map[transcript_id] = set()
 
-            ensg_id = self.transcript_parser.get_associated_ensg_id(line)
-            ncbi_id = self.transcript_parser.get_associated_ncbi_id(line)
-
-            if ensg_id is not None and len(ensg_id) > 0:
-                gene_id = EquivalentId(id=ensg_id, type=Prefix.ENSEMBL).id_str()
-                transcript_gene_map[transcript_id].add(gene_id)
-
-            if ncbi_id is not None and len(ncbi_id) > 0:
-                gene_id = EquivalentId(id=ncbi_id, type=Prefix.NCBIGene).id_str()
-                transcript_gene_map[transcript_id].add(gene_id)
+            if 'parent_ifx_gene_id' in self.transcript_parser.fieldnames:
+                parent_id = self.transcript_parser.get_parent_gene_id(line)
+                if not parent_id:
+                    raise ValueError(f"Transcript {transcript_id} has no parent_ifx_gene_id")
+                transcript_gene_map[transcript_id].add(parent_id)
+            else:
+                ensg_id = self.transcript_parser.get_associated_ensg_id(line)
+                ncbi_id = self.transcript_parser.get_associated_ncbi_id(line)
+                if ensg_id:
+                    transcript_gene_map[transcript_id].add(
+                        EquivalentId(id=ensg_id, type=Prefix.ENSEMBL).id_str()
+                    )
+                if ncbi_id:
+                    transcript_gene_map[transcript_id].add(
+                        EquivalentId(id=ncbi_id, type=Prefix.NCBIGene).id_str()
+                    )
 
             equiv_ids = self.transcript_parser.get_equivalent_ids(line)
             ids = [MatchingPair(id=transcript_id, match=transcript_id, type='exact')]

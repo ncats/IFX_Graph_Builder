@@ -2,6 +2,10 @@
 
 Status: phase-one exporter implemented, 2026-10-05; full graph export remains maintainer-run.
 
+The one-time audit and graph-repair paths mentioned below are members of
+`output_files/ramp/one-time-audits-20261008.tar.gz`; their original loose files
+were removed during output cleanup.
+
 ## Accepted user decisions
 
 - Omit `reaction_protein2met` going forward.
@@ -30,6 +34,21 @@ The user requested this order:
 2. Post-processing.
 3. Audit fields documenting source-data curations.
 4. Optional improvements, including version-compatible RaMP-DB data-access changes.
+
+## Deferred compatibility improvements
+
+- `source.pathwayCount` is an analyte-level count of distinct non-HMDB
+  pathways, repeated on every source ID row for that RaMP ID. The legacy
+  schema and R package expect it there, so the current export preserves it.
+  In a later version-compatible schema/access-layer update, make `analyte`
+  the authoritative home for this value and retire the repeated copy only
+  after existing R-package queries continue to work.
+- For future SQLite builds, calculate the RaMP-specific reaction human-scope
+  flags during projection, while the pinned ChEBI and Rhea evidence is already
+  available. The existing SQLite requires one graph-backed post-processing pass
+  to recover the historical directional-protein flag; later count refreshes
+  can use SQLite alone. Do not turn the RaMP ChEBI-root policy into a generic
+  `ChemicalEntity` assertion.
 
 Preserve existing application behavior initially. Additional chemistry providers
 are in scope; their rows should not be excluded just because older releases lack
@@ -77,11 +96,11 @@ they still require validation against the selected live stage and real records.
 | `reaction2protein` | Reaction/protein relationships mapped to exported gene/analyte IDs |
 | `reaction_ec_class` | Reaction-to-EC classifications and hierarchy |
 | `reaction_protein2met` | Omit, explicitly approved by the user |
-| `db_version` | Export artifact version; intersection JSON belongs to post-processing |
+| `db_version` | Export artifact version and four exclusive source-intersection JSON fields, filled by repeatable SQLite post-processing |
 | `version_info` | Actual contributing source versions, with gaps reported explicitly |
-| `entity_status_info` | Post-processing summaries |
-| `pathway_similarity` | Post-processing counts and serialized overlap data |
-| `pathway_duplicates` | Post-processing identical-analyte pathway pairs |
+| `entity_status_info` | Rerunnable post-processing summaries from stored source-bearing tables; providers discovered dynamically, legacy KEGG aliases combined |
+| `pathway_similarity` | Separate rerunnable SQLite-only post-processing pass writes scope-specific zlib-compressed sparse Jaccard rows |
+| `pathway_duplicates` | Same pass writes exact combined-analyte membership pairs for eligible pathways |
 
 The backend's current `schema/RaMP_SQLite_BASE.sqlite` has only 19 tables and
 adds `version_info.data_source_snapshot_ids`. It is not an exact schema template
@@ -236,6 +255,18 @@ Source data annotations remain attached to source identities. Primary name
 selection is deterministic by documented provider preference. Class/ontology
 ancestors follow the graph parent edges; ontology denylist policy is copied into
 this use case. Scientific policy refinements remain visible follow-up work.
+
+The 2026-10-09 product review exposed a missing part of that policy: the old
+HMDB parser first selected 16 named `Source` terms, and the later denylist
+removed broad categories. The current graph contains `Plant` and `Microbe` as
+parent terms, while the first SQLite projection selected only Source leaves;
+this dropped both query terms and admitted hundreds of specific Source leaves.
+The export now defaults to `--source-ontology-policy legacy`, applying the old
+Source allowlist before the denylist and expanding descendant associations to
+retained parents. `--source-ontology-policy expanded` selects all non-denied
+Source terms, including parents, and the manifest records the choice. Other
+ontology types keep their established leaf/Health-condition-parent rule. This is an export-only
+correction and does not require a graph or harmonization-stage rebuild.
 
 Validation on 2026-10-05:
 

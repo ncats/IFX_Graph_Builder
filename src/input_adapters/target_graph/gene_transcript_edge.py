@@ -4,7 +4,7 @@ from src.interfaces.input_adapter import InputAdapter
 from src.models.datasource_version_info import DatasourceVersionInfo
 from src.models.gene import Gene
 from src.models.node import EquivalentId
-from src.models.transcript import GeneTranscriptEdge, Transcript
+from src.models.transcript import GeneTranscriptEdge, ParentLinkDetail, Transcript
 from src.shared.targetgraph_parser import TargetGraphTranscriptParser
 
 
@@ -30,22 +30,33 @@ class GeneTranscriptEdgeAdapter(InputAdapter, TargetGraphTranscriptParser):
             created = TargetGraphTranscriptParser.get_creation_date(line)
             updated = TargetGraphTranscriptParser.get_updated_time(line)
 
-            ensg_id = TargetGraphTranscriptParser.get_associated_ensg_id(line)
-            ncbi_id = TargetGraphTranscriptParser.get_associated_ncbi_id(line)
-
-            if ensg_id is not None and len(ensg_id) > 0:
-                gene_id = EquivalentId(id=ensg_id, type=Prefix.ENSEMBL)
+            parent_id = TargetGraphTranscriptParser.get_parent_gene_id(line)
+            if 'parent_ifx_gene_id' in self.fieldnames:
+                if not parent_id:
+                    raise ValueError(f"Transcript {transcript_id} has no parent_ifx_gene_id")
+                gene_id = parent_id
+                details = [ParentLinkDetail(
+                    resolution_source=line['parent_resolution_source'],
+                    confidence=line['parent_confidence'],
+                )]
             else:
-                if ncbi_id is None or len(ncbi_id) == 0:
-                    raise Exception("no associated gene", line)
-                gene_id = EquivalentId(id=ncbi_id, type=Prefix.NCBIGene)
+                ensg_id = TargetGraphTranscriptParser.get_associated_ensg_id(line)
+                ncbi_id = TargetGraphTranscriptParser.get_associated_ncbi_id(line)
+                if ensg_id:
+                    gene_id = EquivalentId(id=ensg_id, type=Prefix.ENSEMBL).id_str()
+                elif ncbi_id:
+                    gene_id = EquivalentId(id=ncbi_id, type=Prefix.NCBIGene).id_str()
+                else:
+                    raise ValueError(f"Transcript {transcript_id} has no associated gene")
+                details = []
 
             relationships.append(
                 GeneTranscriptEdge(
-                    start_node=Gene(id=gene_id.id_str()),
+                    start_node=Gene(id=gene_id),
                     end_node=transcript_obj,
                     created=created,
-                    updated=updated
+                    updated=updated,
+                    details=details,
                 )
             )
 

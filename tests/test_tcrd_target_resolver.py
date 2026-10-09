@@ -25,6 +25,7 @@ class _ThreadReusableResolver(SqliteCacheResolver):
 class _ProteinParser:
     def __init__(self, rows):
         self.rows = rows
+        self.fieldnames = set()
 
     def all_rows(self):
         yield from self.rows
@@ -32,6 +33,10 @@ class _ProteinParser:
     @staticmethod
     def get_uniprot_reviewed(row):
         return row.get("reviewed", True)
+
+    @staticmethod
+    def get_uniprot_id(row):
+        return row.get("uniprot_id")
 
     @staticmethod
     def get_is_canonical(row):
@@ -62,8 +67,13 @@ class _ProteinParser:
     def get_gene_id(row):
         return row.get("gene_id")
 
+    @staticmethod
+    def get_parent_gene_id(row):
+        return None
+
 
 class _TranscriptParser:
+    fieldnames = set()
     rows = [
         {"id": "IFXTranscript:1", "ensembl": "ENST000001", "ncbi": "100"},
         {"id": "IFXTranscript:2", "ensembl": "ENST000002", "ncbi": "200"},
@@ -160,8 +170,10 @@ def test_tcrd_target_resolver_maps_isoform_aliases_to_canonical_target():
     assert MatchingPair("IFXProtein:CANONICAL", "IFXProtein:ISOFORM", "isoform") in matches
     assert MatchingPair("IFXProtein:CANONICAL", "UniProtKB:P99999-2", "UniProtKB") in matches
     assert MatchingPair("IFXProtein:CANONICAL", "ENSEMBL:ENST000002", "ENSEMBL") in matches
-    assert MatchingPair("IFXProtein:CANONICAL", "NCBIGene:200", "NCBIGene") in matches
-    assert MatchingPair("IFXProtein:CANONICAL", "Symbol:GENE2", "Symbol") in matches
+    assert MatchingPair("IFXProtein:CANONICAL", "NCBIGene:100", "NCBIGene") in matches
+    assert MatchingPair("IFXProtein:CANONICAL", "Symbol:GENE1", "Symbol") in matches
+    assert MatchingPair("IFXProtein:CANONICAL", "NCBIGene:200", "NCBIGene") not in matches
+    assert MatchingPair("IFXProtein:CANONICAL", "Symbol:GENE2", "Symbol") not in matches
 
 
 def test_tcrd_target_resolver_drops_isoforms_without_canonical_target():

@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
 import sys
-from typing import Any
+from typing import Any, Literal
 
 from ifx_registry import AuditDisposition, RegistryAuditClient, RegistryError, SnapshotRef
 import yaml
@@ -20,6 +21,14 @@ _REFERENCE_FACTORIES = {
     RegistryReferenceKind.DERIVED: SnapshotRef.derived,
     RegistryReferenceKind.EXTERNAL: SnapshotRef.external,
 }
+
+@dataclass(frozen=True)
+class SharedSourcePin:
+    derived_root: SnapshotRef
+    direct: SnapshotRef
+    dependency: SnapshotRef | None
+    other_inputs: tuple[SnapshotRef, ...]
+    result: Literal["MATCH", "MISMATCH", "REVIEW"]
 
 
 def collect_registry_references(
@@ -95,6 +104,106 @@ def audit_build_yaml(
     return client.audit(references, timeout=timeout)
 
 
+def compare_shared_source_pins(report: Any) -> tuple[SharedSourcePin, ...]:
+    """Compare direct source pins with source inputs of each derived YAML root."""
+    if report is None:
+        return ()
+    roots = tuple(getattr(report, "roots", ()))
+    direct_sources = sorted(
+        (ref for ref in roots if ref.kind == RegistryReferenceKind.SOURCE),
+        key=lambda ref: ref.snapshot_id,
+    )
+    entries = {entry.reference: entry for entry in report.entries}
+    comparisons: list[SharedSourcePin] = []
+    for derived_root in sorted(
+        (ref for ref in roots if ref.kind == RegistryReferenceKind.DERIVED),
+        key=lambda ref: ref.snapshot_id,
+    ):
+        dependencies = _transitive_source_dependencies(derived_root, entries)
+        for direct in direct_sources:
+            shared_source = tuple(
+                dependency
+                for dependency in dependencies
+                if dependency.dataset.source == direct.dataset.source
+            )
+            if not shared_source:
+                continue
+            same_dataset = tuple(
+                dependency
+                for dependency in shared_source
+                if dependency.dataset == direct.dataset
+            )
+            other_inputs = tuple(
+                dependency
+                for dependency in shared_source
+                if dependency.dataset != direct.dataset
+            )
+            if not same_dataset:
+                comparisons.append(
+                    SharedSourcePin(
+                        derived_root, direct, None, other_inputs, "REVIEW"
+                    )
+                )
+                continue
+            for dependency in same_dataset:
+                comparisons.append(
+                    SharedSourcePin(
+                        derived_root,
+                        direct,
+                        dependency,
+                        other_inputs,
+                        "MATCH" if direct.version == dependency.version else "MISMATCH",
+                    )
+                )
+    return tuple(comparisons)
+
+
+def _unchecked_derived_roots(report: Any) -> tuple[SnapshotRef, ...]:
+    if report is None:
+        return ()
+    entries = {entry.reference: entry for entry in report.entries}
+    unchecked: set[SnapshotRef] = set()
+    for root in getattr(report, "roots", ()):
+        if root.kind != RegistryReferenceKind.DERIVED:
+            continue
+        pending = [root]
+        visited: set[SnapshotRef] = set()
+        while pending:
+            reference = pending.pop()
+            if reference in visited:
+                continue
+            visited.add(reference)
+            if reference.kind != RegistryReferenceKind.DERIVED:
+                continue
+            entry = entries.get(reference)
+            dependencies = getattr(entry, "dependencies", ()) if entry else ()
+            if not dependencies:
+                unchecked.add(root)
+                break
+            pending.extend(dependencies)
+    return tuple(sorted(unchecked, key=lambda ref: ref.snapshot_id))
+
+
+def _transitive_source_dependencies(
+    derived_root: SnapshotRef, entries: Mapping[SnapshotRef, Any]
+) -> tuple[SnapshotRef, ...]:
+    pending = [derived_root]
+    visited: set[SnapshotRef] = set()
+    sources: set[SnapshotRef] = set()
+    while pending:
+        reference = pending.pop()
+        if reference in visited:
+            continue
+        visited.add(reference)
+        if reference.kind == RegistryReferenceKind.SOURCE:
+            sources.add(reference)
+            continue
+        entry = entries.get(reference)
+        if entry is not None:
+            pending.extend(getattr(entry, "dependencies", ()))
+    return tuple(sorted(sources, key=lambda ref: ref.snapshot_id))
+
+
 def print_report(report: Any, yaml_path: str | Path) -> None:
     """Print a dependency-first, operator-oriented audit report."""
     print(f"Registry freshness for {yaml_path}")
@@ -168,19 +277,8 @@ def print_report(report: Any, yaml_path: str | Path) -> None:
             _print_pin_update_entry,
         ),
         (
-            "Needs manual source confirmation",
-            lambda entry: (
-                entry.disposition is AuditDisposition.UNVERIFIABLE
-                and _has_manual_caveat(entry)
-            ),
-            _print_reason_entry,
-        ),
-        (
             "Needs manual check",
-            lambda entry: (
-                entry.disposition is AuditDisposition.UNVERIFIABLE
-                and not _has_manual_caveat(entry)
-            ),
+            lambda entry: entry.disposition is AuditDisposition.UNVERIFIABLE,
             _print_reason_entry,
         ),
         (
@@ -225,6 +323,44 @@ def print_report(report: Any, yaml_path: str | Path) -> None:
         for entry in entries:
             printer(entry)
 
+    comparisons = compare_shared_source_pins(report)
+    unchecked_roots = _unchecked_derived_roots(report)
+    print(f"\nShared source pins ({len(comparisons)} comparisons)")
+    if not comparisons:
+        if unchecked_roots:
+            print("  Shared source pins cannot be fully checked.")
+        else:
+            print("  No source provider is shared by a direct YAML pin and a derived input.")
+    else:
+        for comparison in comparisons:
+            label = (
+                "REVIEW (same source, different datasets)"
+                if comparison.result == "REVIEW"
+                else comparison.result
+            )
+            print(f"  {label}: {comparison.direct.dataset}")
+            print(f"    YAML: {comparison.direct.snapshot_id}")
+            print(
+                "    Derived: "
+                + (
+                    comparison.dependency.snapshot_id
+                    if comparison.dependency is not None
+                    else f"no {comparison.direct.dataset} pin"
+                )
+                + f" (via {comparison.derived_root.snapshot_id})"
+            )
+            if comparison.other_inputs:
+                print(f"    Other {comparison.direct.dataset.source} inputs:")
+                for other in comparison.other_inputs:
+                    print(f"      {other.snapshot_id}")
+            if comparison.result == "REVIEW":
+                print(
+                    "    Review whether these datasets should share a pin "
+                    "or remain separately versioned."
+                )
+    for root in unchecked_roots:
+        print(f"  UNCHECKED dependency lineage: {root.snapshot_id}")
+
     known_update_count = sum(
         entry.disposition
         in {AuditDisposition.REGISTER_SOURCE, AuditDisposition.REBUILD_DERIVED}
@@ -262,6 +398,14 @@ def print_report(report: Any, yaml_path: str | Path) -> None:
         f"{qualified_current_count} registered with freshness caveats · "
         f"{blocked_count} blocked · "
         f"{fully_current_count} fully up to date"
+    )
+    match_count = sum(item.result == "MATCH" for item in comparisons)
+    mismatch_count = sum(item.result == "MISMATCH" for item in comparisons)
+    review_count = sum(item.result == "REVIEW" for item in comparisons)
+    print(
+        f"Pin consistency: {match_count} matches · {mismatch_count} mismatches · "
+        f"{review_count} same-source dataset reviews · "
+        f"{len(unchecked_roots)} unchecked derived roots"
     )
 
 
@@ -329,13 +473,6 @@ def _caveat_code(caveat: Any) -> str:
     return str(getattr(code, "value", code))
 
 
-def _has_manual_caveat(entry: Any) -> bool:
-    return any(
-        _caveat_code(caveat) == "manual_freshness"
-        for caveat in _caveats(entry)
-    )
-
-
 def _has_only_manual_caveats(entry: Any) -> bool:
     caveats = _caveats(entry)
     return bool(caveats) and all(
@@ -399,7 +536,17 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     print_report(report, args.yaml)
-    return 0 if report is None or report.is_current else 1
+    has_pin_mismatch = any(
+        comparison.result == "MISMATCH"
+        for comparison in compare_shared_source_pins(report)
+    )
+    has_unchecked_lineage = bool(_unchecked_derived_roots(report))
+    return (
+        0
+        if report is None
+        or (report.is_current and not has_pin_mismatch and not has_unchecked_lineage)
+        else 1
+    )
 
 
 def _optional_string(value: object) -> str | None:
