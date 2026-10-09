@@ -82,6 +82,7 @@ class FixtureReader:
             "HmdbOntologyParentEdge": [edge("ONT:root", "ONT:saliva"), edge("ONT:root", "ONT:plasma")],
             "HmdbMetaboliteOntologyEdge": [edge("HMDB:HMDB1", "ONT:saliva"), edge("HMDB:HMDB1", "ONT:plasma")],
             "RheaReaction": [node("RHEA:1", status="Approved", is_transport=False, direction="UN", label="water reaction")],
+            "BiologicalRole": [node("CHEBI:23357", name="cofactor")],
             "RheaReactionClass": [node("EC:1.-.-.-", name="Root EC", ec_level=1), node("EC:1.1.1.1", name="Leaf EC", ec_level=4)],
             "RheaReactionClassParentEdge": [edge("EC:1.1.1.1", "EC:1.-.-.-")],
             "RheaReactionReactionClassEdge": [edge("RHEA:1", "EC:1.1.1.1")],
@@ -116,7 +117,7 @@ def test_base_export_preserves_consumer_contract_and_does_not_invent_identity(tm
         assert db.execute("SELECT commonName FROM ontology").fetchall() == [("Saliva",)]
         assert db.execute("SELECT count(*) FROM analytehasontology").fetchone() == (1,)
         assert db.execute("SELECT uniprot,is_reviewed FROM reaction2protein").fetchone() == ("uniprot:P1", 1)
-        assert db.execute("SELECT substrate_product,is_cofactor FROM reaction2met").fetchone() == (0, -1)
+        assert db.execute("SELECT substrate_product,is_cofactor FROM reaction2met").fetchone() == (0, 0)
         assert db.execute("SELECT has_human_prot,only_human_mets FROM reaction").fetchone() == (-1, -1)
         assert db.execute("PRAGMA foreign_key_check").fetchall() == []
         assert db.execute("SELECT name FROM sqlite_master WHERE name='reaction_protein2met'").fetchall() == []
@@ -127,6 +128,47 @@ def test_base_export_preserves_consumer_contract_and_does_not_invent_identity(tm
         assert db.execute("SELECT a.common_name, cp.iso_smiles FROM reaction2met rm JOIN analyte a ON a.rampId=rm.ramp_cmpd_id LEFT JOIN chem_props cp ON cp.chem_source_id=rm.met_source_id").fetchone()[0] == "Water"
     assert manifest["release_ready"] is False
     assert manifest["excluded_metabolite_edges"] == {"MetabolitePathwayEdge": 1}
+
+
+@pytest.mark.parametrize('source_only', [True, False])
+def test_reaction_cofactor_uses_reported_chebi_id_and_proteins_use_un_only(tmp_path, source_only):
+    reader = FixtureReader()
+    reader.data['BiologicalRole'].append(node('CHEBI:23354', name='coenzyme'))
+    reader.data['IsAEdge'] = [edge('CHEBI:23354', 'CHEBI:23357'),
+                              edge('CHEBI:3', 'CHEBI:1')]
+    reader.data['HasBiologicalRoleEdge'] = [edge('CHEBI:1', 'CHEBI:23354')]
+    reader.data['MetaboliteIdentifier'] += [node('CHEBI:2'), node('CHEBI:3')]
+    reader.groups = lambda: [('CHEBI:1', 'CHEBI:2', 'CHEBI:3', 'HMDB:HMDB1'), ('HMDB:HMDB2',)]
+    reader.data['RheaReaction'].append(
+        node('RHEA:2', status='Approved', is_transport=False, direction='LR', label='directional'))
+    reader.data['RheaMetaboliteReactionEdge'] += [
+        edge('CHEBI:2', 'RHEA:1', side='right'),
+        edge('CHEBI:3', 'RHEA:1', side='right'),
+        edge('CHEBI:1', 'RHEA:2', side='left'),
+    ]
+    reader.data['RheaProteinReactionEdge'].append(edge('UniProtKB:P1', 'RHEA:2'))
+    path = tmp_path / 'reaction.sqlite'
+    manifest = export_sqlite(reader, path, source_only=source_only, progress=lambda _: None)
+    with sqlite3.connect(path) as db:
+        assert db.execute(
+            'SELECT met_source_id,is_cofactor FROM reaction2met ORDER BY rxn_source_id,met_source_id'
+        ).fetchall() == [('chebi:1', 1), ('chebi:2', 0), ('chebi:3', 1), ('chebi:1', 1)]
+        assert db.execute('SELECT rxn_source_id FROM reaction2protein').fetchall() == [('rhea:1',)]
+        assert db.execute('SELECT rxn_source_id FROM reaction ORDER BY rxn_source_id').fetchall() == [
+            ('rhea:1',), ('rhea:2',)]
+        assert db.execute('SELECT count(*) FROM source WHERE sourceId=? AND dataSource=?',
+                          ('uniprot:P1', 'rhea')).fetchone()[0] > 0
+    assert manifest['cofactor_role_count'] == 2
+    assert manifest['cofactor_chemical_id_count'] == 2
+    assert manifest['cofactor_reaction_assertions'] == 3
+    assert manifest['non_un_protein_assertions_excluded'] == 1
+
+
+def test_reaction_cofactor_role_is_required(tmp_path):
+    reader = FixtureReader()
+    reader.data['BiologicalRole'] = []
+    with pytest.raises(ValueError, match='CHEBI:23357.*missing'):
+        export_sqlite(reader, tmp_path / 'missing-role.sqlite', progress=lambda _: None)
 
 
 @pytest.mark.parametrize('source_only', [True, False])

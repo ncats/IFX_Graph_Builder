@@ -1,5 +1,24 @@
-# Legacy RaMP export policy, copied from ramp-backend-ncats/config/options.yml.
+# Legacy RaMP export policy. Source allowlist comes from hmdbData.parseSource;
+# denylist comes from ramp-backend-ncats/config/options.yml.
 ontology:
+  allowlist:
+    Source:
+    - Endogenous
+    - Exogenous
+    - Microbial
+    - Drug or steroid metabolite
+    - Drug metabolite
+    - Toxin/Pollutant
+    - Food
+    - Cosmetic
+    - Plant
+    - Drug
+    - Environmental
+    - Saccharomyces cerevisiae
+    - Synthetic
+    - Animal
+    - Fungi
+    - Microbe
   denylist:
     Biofluid and excreta:
     - Semen

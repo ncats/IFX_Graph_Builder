@@ -26,6 +26,8 @@ def release_label(source, dataset):
     if version.startswith(('sha256-', 'deps-')):
         kind = 'Derived dataset' if version.startswith('deps-') else 'Content snapshot'
         date = dataset.get('download_date')
+        if source in ('pubchem', 'refmet') and date:
+            return f'downloaded {date}'
         return f'{kind}; downloaded {date}' if date else f'{kind}; release not recorded'
     if not version:
         return 'Release not recorded'

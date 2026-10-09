@@ -19,7 +19,8 @@ def test_version_display_preserves_multiple_releases_and_snapshot_meaning():
     assert display_metadata('hmdb', [{'dataset': d, 'version': '5.0'} for d in ['proteins_xml', 'metabolites_xml']])['data_source_version'] == 'v5.0'
     value = display_metadata('chebi', [{'dataset': 'ontology_full', 'version': '255'}, {'dataset': 'three_star_sdf', 'version': '2026-09-09'}])['data_source_version']
     assert value == 'Ontology: Release 255; Structures: 2026-09-09'
-    assert display_metadata('refmet', [{'dataset': 'metabolites_csv', 'version': 'sha256-abc', 'download_date': '2026-09-01'}])['data_source_version'] == 'Content snapshot; downloaded 2026-09-01'
+    assert display_metadata('refmet', [{'dataset': 'metabolites_csv', 'version': 'sha256-abc', 'download_date': '2026-09-01'}])['data_source_version'] == 'downloaded 2026-09-01'
+    assert display_metadata('pubchem', [{'dataset': 'cid_molecular_info', 'version': 'deps-abc', 'download_date': '2026-10-06'}])['data_source_version'] == 'downloaded 2026-10-06'
     assert display_metadata('pubchem', [{'dataset': 'cid_molecular_info', 'version': 'deps-abc'}])['data_source_version'] == 'Derived dataset; release not recorded'
     assert display_metadata('hmdb', [{'dataset': 'metabolites_xml'}])['data_source_version'] == 'Release not recorded'
 

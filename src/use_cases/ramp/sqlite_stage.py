@@ -15,6 +15,7 @@ COLLECTIONS = (
     "RheaReaction", "RheaMetaboliteReactionEdge", "RheaProteinReactionEdge",
     "RheaReactionClass", "RheaReactionClassParentEdge", "RheaReactionReactionClassEdge",
     "ChemicalEntity", "ChebiChemicalEntityMetaboliteIdentifierEdge",
+    "BiologicalRole", "IsAEdge", "HasBiologicalRoleEdge",
     "HarmonizationStageActiveIdentifierChunk", "HarmonizedMetabolite",
     "HarmonizedMetaboliteMemberEdge", "metadata_store",
 )
@@ -90,7 +91,7 @@ class StageReader:
     def records(self, collection):
         cursor = self.db.aql.execute(
             "FOR d IN @@c SORT d._key RETURN d", bind_vars={"@c": collection},
-            batch_size=5000, stream=True, max_runtime=3600,
+            batch_size=5000, stream=True, max_runtime=3600, ttl=3600,
         )
         try:
             for doc in cursor:

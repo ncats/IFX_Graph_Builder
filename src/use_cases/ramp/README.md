@@ -1,10 +1,25 @@
 # RaMP builds
 
-`build_ramp.py` builds the source-evidence graph. `build_sqlite.py` currently
-exports a seven-table lookup and association diagnostic from a completed
-harmonization stage.
+`build_ramp.py` builds the `metabolite_harmonization` source graph. Run and
+validate the harmonization pipeline in the UI, then pass its completed stage
+ID to `build_sqlite.py`. The SQLite command exports every primary table,
+calculates entity status, lookup counts, human reaction flags, pathway
+similarity, and duplicates, then publishes the complete database.
 
-## Export the lookup tables
+```bash
+.venv/bin/python -m src.use_cases.ramp.build_sqlite \
+  --stage-id YOUR_VALIDATED_STAGE_ID \
+  --output output_files/ramp/ramp-base.sqlite --overwrite
+```
+
+Use the actual stage ID from the validated UI run; it changes between builds.
+Omit `--overwrite` for a new output. The command keeps any existing SQLite
+until export, both post-processing passes, and final validation succeed.
+
+Earlier one-time audit and graph-repair artifacts, including paths referenced
+below, are preserved in `output_files/ramp/one-time-audits-20261008.tar.gz`.
+
+## Build the SQLite
 
 Run from the IFX_ODIN repository root with the project environment:
 
@@ -14,15 +29,27 @@ Run from the IFX_ODIN repository root with the project environment:
   --output output_files/ramp/ramp-base.sqlite
 ```
 
-The only required arguments are stage ID and output path. Optional arguments:
+The only required arguments are stage ID and output path. The default produces
+the complete SQLite. Optional arguments:
 
 - `--release-version`: output label, default `unreleased`. Does not make the
   intermediate artifact release-ready.
 - `--overwrite`: replace an existing output after the new export passes validation.
-- `--full-base`: opt in to the earlier full base-table export. By default, the
-  diagnostic contains `analyte`, `source`, `analytesynonym`, `pathway`,
-  `ontology`, `analytehaspathway`, and `analytehasontology`;
-  it is not an R-package database.
+- `--diagnostic`: build the limited lookup/association/reaction diagnostic
+  without post-processing; this is incomplete for the R package.
+- `--base-only`: export full primary tables and leave post-processing pending.
+  `--full-base` is accepted as an alias for the default complete build.
+- `--pathway-association-cutoff`: omit all metabolite- or gene-pathway links
+  for a source-reported analyte ID within one pathway source when it has this
+  many or more reported links. Defaults to `25000`, matching the legacy
+  builder across all pathway sources; `0` disables the cutoff. The export
+  summary reports the cutoff and excluded assertion counts.
+- `--include-lipidmaps-class-level4`: include the `CLASS_LEVEL4` SDF field in
+  `metabolite_class`. By default, the export omits this fourth LipidMaps level
+  to match the legacy RaMP builder; category, main class, and subclass remain.
+  The choice and number of excluded assertions are recorded in the export
+  manifest and printed by the command. The graph retains the level-4 evidence,
+  so changing this option only requires another SQLite export.
 - `--database`: defaults to `metabolite_harmonization`.
 - `--graph-credentials`: Arango credential YAML file, defaults to
   `src/use_cases/secrets/ifxdev_arangodb.yaml`.
@@ -68,7 +95,7 @@ sidecars prevent replacement.
 
 ## Current scope
 
-The default export focuses on lookup data. `source` contains all IDs each input used to report
+The optional `--diagnostic` export focuses on lookup data. `source` contains all IDs each input used to report
 retained RaMP data, including associations and chemistry. A source row maps a
 reported ID to a RaMP analyte and attributes it to the reporting input;
 `dataSource` and the ID namespace `IDtype` can differ. Direct chemistry
@@ -91,19 +118,78 @@ The diagnostic also carries pathway and HMDB ontology associations with their
 target lookup tables. `analytehaspathway.pathwaySource` is the stored source
 attribution, including `kegg` for HMDB-supplied KEGG pathways. The ontology
 association table has no source column; its HMDB attribution follows from its
-HMDB ontology terms. `ontology.metCount` remains pending.
+HMDB ontology terms. `ontology.metCount` is filled by the SQLite post-processing command below.
 
-The earlier full base-table export remains available with `--full-base`. It
-retains the legacy table/column/index contract with these explicit differences:
+## Refresh post-processing without rebuilding primary tables
+
+To rerun post-processing on an existing full SQLite after changing its logic, run:
+
+```bash
+.venv/bin/python -m src.use_cases.ramp.postprocess_sqlite \
+  --sqlite output_files/ramp/ramp-base.sqlite --with-human-flags
+```
+
+This updates `entity_status_info`, the four `db_version` source-intersection
+JSON fields, `source.pathwayCount`,
+`ontology.metCount`, `reaction.has_human_prot`, and
+`reaction.only_human_mets` in one SQLite transaction. It can be rerun after a
+post-processing code change without recreating the primary tables. The first
+three calculations use the existing SQLite; `--with-human-flags` additionally
+reads the matching graph's original Rhea edges and ChEBI `is_a`/biological-role
+edges, plus the exact UniProt human primary-accession pin recorded in the
+SQLite manifest. The command verifies the stage, graph revisions, and UniProt
+checksum before changing the database. Omit `--with-human-flags` to refresh
+only the SQLite-derived counts and intersections, leaving existing reaction
+flags as they are. The command also creates the legacy
+`pathway_duplicates` and `pathway_similarity` tables as **empty placeholders**.
+Populate or refresh those two tables independently, using only the existing
+SQLite, with:
+
+```bash
+.venv/bin/python -m src.use_cases.ramp.postprocess_sqlite \
+  --sqlite output_files/ramp/ramp-base.sqlite --pathway-only
+```
+
+This replaces both tables atomically. It logs scope start/finish, progress every
+5,000 pathways or 30 seconds, compressed size, and elapsed time. The combined,
+metabolite, and gene scopes respectively require at least 10, 5, and 5 distinct
+RaMP IDs per non-SMPDB pathway. Only positive Jaccard scores, rounded to
+thousandths, are stored as delta-indexed, zlib-compressed BLOBs; duplicate
+pairs have identical combined-analyte memberships. The manifest marks these
+tables `computed` after successful validation. Ordinary count-only
+post-processing preserves a completed pathway calculation.
+For this already-built SQLite, use `--with-human-flags` once to fill those
+flags; later iterations of the count logic can use only `--sqlite`. The
+directional Rhea protein evidence is not stored in `reaction2protein` (which
+contains only `UN` links), so a first graph-free pass cannot reproduce the
+legacy per-reaction human-protein flags. The current SQLite does contain all
+344,152 Rhea metabolite links, but the ChEBI human-class closure itself is not
+stored there.
+The ChEBI roots and traversal are RaMP's historical operational definition;
+they are not asserted as a general `ChemicalEntity` property in the graph.
+
+`source.pathwayCount` follows the old rule: distinct non-HMDB pathways per
+RaMP analyte, repeated on each of that analyte's source rows.
+`ontology.metCount` counts distinct associated metabolites per term.
+`entity_status_info` discovers providers from the stored source-bearing tables
+instead of an exhaustive hard-coded source list; KEGG source aliases are
+combined as one distinct-analyte count. The `entity_status_info` count table
+in the R package uses these rows. Its analyte-overlap UpSet plot uses the four
+`db_version` intersection JSON fields. These count exact source combinations
+from `source`; the pathway-mapped variants omit SMPDB-only pathway links.
+
+The complete export retains the legacy table/column/index contract with these
+explicit differences:
 
 - `reaction_protein2met` is omitted, as agreed.
 - `version_info.data_source_snapshot_ids` lists the exact Registry input IDs.
 - `ramp_export_metadata` stores one JSON manifest under key `manifest`.
-- `entity_status_info`, `pathway_similarity`, and `pathway_duplicates` are empty
-  until post-processing is implemented.
-- Pending counts, derived flags, and intersections are `NULL` where permitted,
-  or `-1` where the legacy schema requires an integer. The manifest enumerates
-  these fields; they must not be interpreted as completed calculations.
+- The diagnostic export now includes `chem_props` and `version_info` as well.
+- `entity_status_info`, `db_version` intersections, `pathway_similarity`,
+  and `pathway_duplicates` are filled during the default SQLite build.
+- In an explicit `--base-only` export, pending counts, derived flags, and
+  intersections are `NULL` where permitted, or `-1` where the legacy schema
+  requires an integer. The manifest enumerates these fields.
 - Gene/protein identifiers present in the RaMP inputs connect all their returned
   canonical UniProt matches into groups. Overlapping groups merge transitively
   and receive one sequential `RAMP_G_*` ID. Unused UniProt aliases cannot connect
@@ -179,7 +265,13 @@ cross-references are not added as identifier aliases. The annotation manifest
 records the selection policy and accession/alias counts across the input file.
 
 Class and ontology ancestors are expanded explicitly. Ontology exports apply
-the legacy denylist in `sqlite_ontology_policy.yaml`. Identical output rows are
+the legacy denylist in `sqlite_ontology_policy.yaml`. By default,
+`--source-ontology-policy legacy` also applies the old builder's named-term
+allowlist to HMDB `Source` terms. This retains parent terms such as `Plant` and
+`Microbe` with descendant memberships while excluding unselected specific
+Source terms. `--source-ontology-policy expanded` retains all non-denied Source
+terms, including parents, and the chosen policy is recorded in the export
+manifest. Identical output rows are
 deduplicated; conflicting rows sharing a legacy primary key cause failure.
 
 ## Inspect and validate the output
@@ -193,7 +285,9 @@ PRAGMA integrity_check;
 PRAGMA foreign_key_check;
 ```
 
-`ramp_export_metadata` and `version_info` are available only with `--full-base`.
+`ramp_export_metadata` and `version_info` are available in both export modes.
+`db_version`, `entity_status_info`, and the two empty pathway tables are added
+or filled by the repeatable post-processing command above.
 
 Tests (no network or graph required):
 
@@ -224,6 +318,16 @@ the Registry and decompress them before running:
   --output output_files/ramp/comparison.html
 ```
 
+To refresh the same comparison automatically after the next complete SQLite
+build, add `--refresh-report-from output_files/ramp/comparison.json` to
+`build_sqlite.py`. It reuses the ordered historical inputs recorded in that
+JSON and replaces its final “New harmonized build” input with the newly
+published SQLite. The HTML defaults to the same basename; use
+`--report-output` to choose another path. The option is explicit because the
+historical paths may exist only in a local Registry cache. If report generation
+fails, the completed SQLite remains in place and the command reports the
+comparison failure separately.
+
 The command opens inputs read-only and needs no graph connection. It first
 compares distinct metabolite and gene/protein RaMP IDs in `analyte`, then shows
 the `analyte` cells for D-glucose and EGFR matched across builds by their
@@ -238,7 +342,40 @@ within each input; an unsupported type is labeled explicitly. A missing synonym 
 ontology type and pathway links by stored source and analyte type. They show
 association rows, distinct RaMP IDs and distinct terms/pathways, plus examples
 matched by source identities across builds. Missing association tables are
-shown as "Table absent". The lookup ambiguity and integrity checks follow.
+shown as "Table absent". Further tabs compare `catalyzed` pair coverage and
+`metabolite_class` by stored source and class level. Catalyzed examples match
+both endpoint source IDs; class examples match the reported metabolite ID and
+class level. Each shows the stored columns and field coverage. The lookup
+ambiguity and integrity checks follow.
+Four reaction tabs compare `reaction`, `reaction2met`, `reaction2protein`, and
+`reaction_ec_class` rows, distinct Rhea reactions, and participant RaMP IDs
+where applicable. Examples follow Rhea and participant source IDs or EC codes
+across builds rather than release-local `RAMP_R` IDs. Older absent tables and
+columns are labeled explicitly. Unknown `-1` flags are excluded from field
+coverage. The diagnostic export now retains these four tables and its manifest;
+`reaction_protein2met` remains omitted as a redundant cross-product.
+The chemical-properties tab compares stored rows, distinct chemistry source
+IDs, and metabolite RaMP IDs by property source. Its examples follow one
+chemistry source ID per provider across builds and show every `chem_props`
+column plus source-wide field coverage. The source-versions tab compares
+current recorded versions and shows every stored `version_info` row, including
+archived entries in historical databases.
+The **Version & UpSet** tab near Source shows the ordinary `db_version` fields,
+four source-intersection summaries, and one UpSet plot per build for the selected
+scope. Each plot shows the 20 largest exact source combinations on a shared
+scale and states how many combinations and analytes are outside the plot. The
+numeric combination tables and every stored `db_version` row remain available
+below the plots. Missing or malformed JSON is labeled instead of drawn as zero.
+The **Pathway similarity** tab compares stored similarity rows, coverage of all
+three compressed BLOB columns, compressed byte totals, and exact-duplicate
+pairs. It decodes a few partners for a matched Reactome pathway while keeping
+full BLOBs out of the HTML and JSON report.
+`reaction2met.is_cofactor` is 1 when the reported ChEBI participant has the
+`CHEBI:23357` cofactor role (including descendant roles or chemical subclasses),
+and 0 otherwise. This follows ChEBI `is_a` and biological-role edges in the
+linked graph; it does not mark every member of a harmonized metabolite group.
+`reaction2protein` retains only `UN` reactions, matching the legacy writer.
+Directional reactions and their metabolite/EC links remain in their tables.
 Deltas compare each build with the preceding one. RaMP IDs are counted within
 a build, never matched across releases. Count increases/decreases are shaded
 green/red even when the previous count was zero; example field-coverage shading
