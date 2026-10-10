@@ -221,7 +221,8 @@ input_adapters:
   - import: ./src/input_adapters/antibodypedia/antibody_count.py
     class: AntibodyCountAdapter
     kwargs:
-      data_source: antibodypedia:scraped_results:2025-06-27_12-32
+      data_source: {kind: derived_snapshot, snapshot_id: antibodypedia:scraped_results:2026-10-09_21-18-ifxprotein-2.4.0}
+      identifier_mode: ifx_protein
 
   - import: ./src/input_adapters/go/go_gaf.py
     class: ProteinGoTermEdgeAdapter
@@ -298,9 +299,9 @@ input_adapters:
     kwargs:
       protein_data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.4.0}
       glygen_data_source: glygen:proteins:0a30c984d41c68500790b376e3644145
-      dark_kinome_data_source: dark_kinome:kinases:2026-06-10
-      resolute_data_source: resolute:genes:2026-06-10
-      linkedomics_data_source: linkedomics:genes:2026-06-10
+      dark_kinome_data_source: dark_kinome:kinases:capture_20261009T185302Z
+      resolute_data_source: resolute:genes:capture_20261009T185323Z
+      linkedomics_data_source: linkedomics:genes:capture_20261009T185345Z
       tiga_data_source: tiga:gene_trait:20260720
       canonical_only: true
 
@@ -365,7 +366,7 @@ input_adapters:
   - import: ./src/input_adapters/surechembl/patent_families.py
     class: SureChEMBLPatentFamilyAdapter
     kwargs:
-      data_source: {kind: derived_snapshot, snapshot_id: surechembl:patent_family_mentions:2026-06-01}
+      data_source: {kind: derived_snapshot, snapshot_id: surechembl:patent_family_mentions:deps-55ef832e4606}
 
   - import: ./src/input_adapters/ncbi/publications.py
     class: NCBIPublicationAdapter
