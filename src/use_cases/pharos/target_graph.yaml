@@ -262,7 +262,8 @@ input_adapters:
   - import: ./src/input_adapters/antibodypedia/antibody_count.py
     class: AntibodyCountAdapter
     kwargs:
-      data_source: antibodypedia:scraped_results:2025-06-27_12-32
+      data_source: {kind: derived_snapshot, snapshot_id: antibodypedia:scraped_results:2026-10-09_21-18-ifxprotein-2.4.0}
+      identifier_mode: ifx_protein
 
   - import: ./src/input_adapters/pharos_mysql/idg_family_adapter.py
     class: IDGFamilyAdapter
@@ -401,7 +402,7 @@ input_adapters:
   - import: ./src/input_adapters/surechembl/patent_families.py
     class: SureChEMBLPatentFamilyAdapter
     kwargs:
-      data_source: {kind: derived_snapshot, snapshot_id: surechembl:patent_family_mentions:2026-06-01}
+      data_source: {kind: derived_snapshot, snapshot_id: surechembl:patent_family_mentions:deps-55ef832e4606}
 
   - import: ./src/input_adapters/ncbi/publications.py
     class: NCBIPublicationAdapter
