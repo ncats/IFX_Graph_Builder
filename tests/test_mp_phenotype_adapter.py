@@ -5,7 +5,7 @@ from tests.registry_fakes import registry_dataset
 
 
 def test_mp_adapter_emits_mouse_phenotype_nodes(tmp_path):
-    mp_path = tmp_path / "MPheno_OBO.ontology"
+    mp_path = tmp_path / "mp.obo"
     mp_path.write_text(
         """format-version: 1.2
 data-version: releases/2026-05-01

@@ -11,7 +11,7 @@ from src.models.mouse_phenotype import MousePhenotype
 class MPPhenotypeAdapter(FlatFileAdapter):
     def __init__(self, data_source):
         self.version_info = data_source.version_info()
-        file_path = str(data_source.file("MPheno_OBO.ontology"))
+        file_path = str(data_source.file("mp.obo"))
         super().__init__(file_path)
         self._graph = obonet.read_obo(self.file_path)
 
