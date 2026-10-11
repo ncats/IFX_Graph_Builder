@@ -6,7 +6,7 @@ from tests.registry_fakes import registry_dataset
 
 
 def test_string_ppi_adapter_applies_default_cutoff_and_skips_self_pairs(tmp_path):
-    data_path = tmp_path / "9606.protein.links.v12.0.txt.gz"
+    data_path = tmp_path / "9606.protein.links.v12.5.txt.gz"
 
     with gzip.open(data_path, "wt", encoding="utf-8") as handle:
         handle.write(
@@ -25,7 +25,7 @@ def test_string_ppi_adapter_applies_default_cutoff_and_skips_self_pairs(tmp_path
         data_source=registry_dataset(
             tmp_path,
             data_path.name,
-            version="12.0",
+            version="12.5",
             version_date=date(2025, 1, 15),
         ),
     )
@@ -41,7 +41,7 @@ def test_string_ppi_adapter_applies_default_cutoff_and_skips_self_pairs(tmp_path
     assert all(edge.sources == [] for edge in edges)
 
     version = adapter.get_version()
-    assert version.version == "12.0"
+    assert version.version == "12.5"
     assert version.version_date.isoformat() == "2025-01-15"
 
 

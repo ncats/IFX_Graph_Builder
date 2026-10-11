@@ -19,7 +19,7 @@ class StringPPIAdapter(FlatFileAdapter):
         score_cutoff: int = 400,
         max_rows: Optional[int] = None,
     ):
-        file_path = str(data_source.file("9606.protein.links.v12.0.txt.gz"))
+        file_path = str(data_source.file())
         FlatFileAdapter.__init__(self, file_path=file_path)
         self.score_cutoff = int(score_cutoff)
         self.max_rows = max_rows
