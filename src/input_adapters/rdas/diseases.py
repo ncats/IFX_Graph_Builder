@@ -12,9 +12,9 @@ class RDASRareDiseaseAdapter(InputAdapter):
     graphql_url = "https://rdas.ncats.nih.gov/api/diseases/graphql"
     query = """
     query RareDiseases($limit: Int, $offset: Int) {
-      gards(limit: $limit, offset: $offset) {
-        GardId
-        GardName
+      diseases(limit: $limit, offset: $offset) {
+        gardId
+        gardName
       }
     }
     """
@@ -56,17 +56,11 @@ class RDASRareDiseaseAdapter(InputAdapter):
         return f"GARD:{int(raw):07d}"
 
     @staticmethod
-    def _extract_gards(payload: dict) -> list[dict]:
-        data = payload.get("data") or {}
-        gards = data.get("gards")
-        if isinstance(gards, list):
-            return gards
-        if isinstance(gards, dict):
-            if isinstance(gards.get("nodes"), list):
-                return gards["nodes"]
-            if isinstance(gards.get("edges"), list):
-                return [edge.get("node") for edge in gards["edges"] if edge.get("node")]
-        return []
+    def _extract_diseases(payload: dict) -> list[dict]:
+        data = payload.get("data")
+        if not isinstance(data, dict) or not isinstance(data.get("diseases"), list):
+            raise ValueError("RDAS GraphQL response is missing data.diseases list")
+        return data["diseases"]
 
     def _fetch_page(self, offset: int) -> list[dict]:
         response = requests.post(
@@ -80,11 +74,16 @@ class RDASRareDiseaseAdapter(InputAdapter):
             },
             timeout=self.request_timeout,
         )
-        response.raise_for_status()
-        payload = response.json()
+        try:
+            payload = response.json()
+        except ValueError:
+            response.raise_for_status()
+            raise ValueError("RDAS GraphQL response is not JSON")
         if payload.get("errors"):
-            raise RuntimeError(f"RDAS GraphQL returned errors: {payload['errors']}")
-        return self._extract_gards(payload)
+            messages = [error.get("message", str(error)) for error in payload["errors"]]
+            raise RuntimeError(f"RDAS GraphQL returned errors: {'; '.join(messages)}")
+        response.raise_for_status()
+        return self._extract_diseases(payload)
 
     def _iter_rare_diseases(self):
         seen = set()
@@ -97,14 +96,14 @@ class RDASRareDiseaseAdapter(InputAdapter):
                 break
 
             for row in page:
-                gard_id = self._normalize_gard_id(row.get("GardId"))
+                gard_id = self._normalize_gard_id(row.get("gardId"))
                 if gard_id is None or gard_id in seen:
                     continue
                 seen.add(gard_id)
                 emitted += 1
                 yield Disease(
                     id=gard_id,
-                    name=(row.get("GardName") or "").strip() or None,
+                    name=(row.get("gardName") or "").strip() or None,
                     rare_disease=True,
                 )
                 if self.max_rows is not None and emitted >= self.max_rows:
