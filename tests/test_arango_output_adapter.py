@@ -141,6 +141,35 @@ def build_adapter(existing_nodes, collection):
     return adapter
 
 
+def test_get_existing_nodes_uses_independent_bounded_queries():
+    collection = FakeCollection()
+    calls = []
+
+    def execute(query, *, bind_vars, batch_size, max_runtime):
+        calls.append((bind_vars, batch_size))
+        assert len(bind_vars["keys"]) < batch_size
+        return [
+            {"_key": key, "id": key}
+            for key in bind_vars["keys"]
+            if key.endswith("0")
+        ]
+
+    db = SimpleNamespace(
+        has_collection=lambda label: True,
+        collection=lambda label: collection,
+        aql=SimpleNamespace(execute=execute),
+    )
+    adapter = ArangoOutputAdapter.__new__(ArangoOutputAdapter)
+    objects = [{"id": f"P{i}", "name": "protein"} for i in range(2001)]
+
+    returned_collection, existing = adapter.get_existing_nodes(db, "Protein", objects)
+
+    assert returned_collection is collection
+    assert [len(call[0]["keys"]) for call in calls] == [1000, 1000, 1]
+    assert len(existing) == 201
+    assert all(call[0]["fields"] == calls[0][0]["fields"] for call in calls)
+
+
 def test_arango_output_adapter_etl_metadata_includes_readable_resolver_metadata():
     data_source = RegistryDataset(
         kind=RegistryDatasetKind.SOURCE,

@@ -629,21 +629,26 @@ class ArangoOutputAdapter(OutputAdapter, ArangoAdapter):
             return collection, []
         keys = [self.safe_key(obj['id']) for obj in obj_list]
         fetch_fields = self.get_node_merge_fetch_fields(obj_list)
-        existing_nodes = list(db.aql.execute(
-            """
-            FOR key IN @keys
-              LET doc = DOCUMENT(@collection, key)
-              FILTER doc != null
-              RETURN KEEP(doc, @fields)
-            """,
-            bind_vars={
-                "collection": label,
-                "keys": keys,
-                "fields": fetch_fields,
-            },
-            batch_size=max(100, min(len(keys), 1000)),
-            max_runtime=600,
-        ))
+        existing_nodes = []
+        # Keep each result within one response so a long merge does not depend
+        # on a server cursor surviving across fetch requests.
+        for offset in range(0, len(keys), 1000):
+            key_batch = keys[offset:offset + 1000]
+            existing_nodes.extend(db.aql.execute(
+                """
+                FOR key IN @keys
+                  LET doc = DOCUMENT(@collection, key)
+                  FILTER doc != null
+                  RETURN KEEP(doc, @fields)
+                """,
+                bind_vars={
+                    "collection": label,
+                    "keys": key_batch,
+                    "fields": fetch_fields,
+                },
+                batch_size=len(key_batch) + 1,
+                max_runtime=600,
+            ))
         return collection, existing_nodes
 
     def get_node_merge_fetch_fields(self, obj_list):
