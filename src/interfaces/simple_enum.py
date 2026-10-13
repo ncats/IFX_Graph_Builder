@@ -1,5 +1,15 @@
 from enum import Enum
+from functools import lru_cache
 from typing import Union
+
+
+@lru_cache(maxsize=None)
+def _parse_members(enum_type):
+    # Keep the first member for values that differ only in case.
+    members = {}
+    for index, member in enumerate(enum_type):
+        members.setdefault(member.value.lower(), (index, member))
+    return members
 
 
 class SimpleEnum(str, Enum):
@@ -15,13 +25,15 @@ class SimpleEnum(str, Enum):
             return None
         if isinstance(input_value, Enum):
             return input_value
-        for member in cls:
-            if member.value.lower() == input_value.strip().lower().replace('_', '.'):
-                return member
-            if member.value.lower() == input_value.strip().lower().replace('-', '.'):
-                return member
-            if member.value.lower() == input_value.strip().lower():
-                return member
+        value = input_value.strip().lower()
+        members = _parse_members(cls)
+        best = None
+        for candidate_value in (value.replace('_', '.'), value.replace('-', '.'), value):
+            candidate = members.get(candidate_value)
+            if candidate is not None and (best is None or candidate[0] < best[0]):
+                best = candidate
+        if best is not None:
+            return best[1]
         print(f"couldn't parse this value: {input_value}")
 
 

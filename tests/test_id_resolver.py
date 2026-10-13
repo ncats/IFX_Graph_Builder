@@ -2,7 +2,7 @@ from typing import List, Dict
 
 from src.interfaces.id_resolver import IdResolver, IdMatch, NoMatchBehavior, MultiMatchBehavior
 from src.models.gene import Gene, GeneticLocation
-from src.models.node import Node
+from src.models.node import EquivalentId, Node
 from src.models.protein import Protein
 
 
@@ -35,6 +35,24 @@ def test_simple_merge():
 
     assert len(merged_map[IdResolver.MatchKeys.unmatched]) == 1
     assert merged_map[IdResolver.MatchKeys.unmatched]['2'].id == '2'
+
+
+def test_repeated_ids_parse_xrefs_once(monkeypatch):
+    resolver = TempResolver(types=['Node'])
+    entries = [Node(id='1') for _ in range(100)]
+    id_map = {'1': [IdMatch('1', 'Match:1', equivalent_ids=['EC:1', 'EC:2'])]}
+    parsed = []
+    original_parse = EquivalentId.parse
+
+    def track_parse(value):
+        parsed.append(value)
+        return original_parse(value)
+
+    monkeypatch.setattr(EquivalentId, 'parse', staticmethod(track_parse))
+    merged_map = resolver.get_merged_map(entries, id_map)
+
+    assert parsed == ['EC:1', 'EC:2']
+    assert len(merged_map[IdResolver.MatchKeys.matched]['1'].xref) == 2
 
 
 def test_cross_type_retype_copies_compatible_fields():

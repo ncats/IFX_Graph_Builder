@@ -130,7 +130,7 @@ def hierarchy(reader, term_collection, edge_collection, *, parent_first=True):
 
 
 def retained_hmdb_ontology_terms(terms, policy, source_policy='legacy'):
-    """Select Source terms by policy and other HMDB leaves/health intermediates."""
+    """Select non-root HMDB terms using the legacy Source and denylist policies."""
     if source_policy not in {'legacy', 'expanded'}:
         raise ValueError(f'Unknown HMDB Source ontology policy: {source_policy}')
     denylist = policy['denylist']
@@ -138,13 +138,9 @@ def retained_hmdb_ontology_terms(terms, policy, source_policy='legacy'):
     if not source_allowlist:
         raise ValueError('HMDB Source ontology allowlist must not be empty')
     return {tid: term for tid, term in terms.items()
-            if ((term.get('ontology_type') == 'Source'
-                 and term['name'] != 'Source'
-                 and (source_policy == 'expanded' or term['name'] in source_allowlist))
-                or (term.get('ontology_type') != 'Source'
-                    and (term.get('term_type') == 'child'
-                         or (term.get('ontology_type') == 'Health condition'
-                             and term.get('term_type') == 'parent'))))
+            if (term.get('ontology_type') != 'Source'
+                or source_policy == 'expanded'
+                or term['name'] in source_allowlist)
             and term['name'] != term.get('ontology_type')
             and term['name'] not in denylist.get(term.get('ontology_type'), [])}
 

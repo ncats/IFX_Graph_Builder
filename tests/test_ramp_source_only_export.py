@@ -128,6 +128,59 @@ def test_hmdb_intermediate_health_terms_match_legacy_ontology(tmp_path, source_o
 
 
 @pytest.mark.parametrize('source_only', [True, False])
+def test_curated_non_source_parent_terms_and_descendant_links_are_exported(tmp_path, source_only):
+    reader, identity = resolved_fixture(tmp_path)
+    terms = {
+        'Industrial application': (
+            'Antimicrobial agent', 'Antineoplastic agent', 'Cardiovascular drug',
+            'Household products', 'Pesticide'),
+        'Organ and components': ('Endocrine gland',),
+    }
+    for category, names in terms.items():
+        root = f'ONT:{category}'
+        reader.data['HmdbOntologyTerm'].append(
+            node(root, name=category, term_type='parent', ontology_type=category))
+        for name in names:
+            parent, child = f'ONT:{name}', f'ONT:{name}:example'
+            reader.data['HmdbOntologyTerm'] += [
+                node(parent, name=name, term_type='parent', ontology_type=category),
+                node(child, name=f'{name} example', term_type='child', ontology_type=category),
+            ]
+            reader.data['HmdbOntologyParentEdge'] += [edge(root, parent), edge(parent, child)]
+            reader.data['HmdbMetaboliteOntologyEdge'].append(edge('HMDB:HMDB1', child))
+    reader.data['HmdbMetaboliteOntologyEdge'].append(
+        edge('HMDB:HMDB2', 'ONT:Antimicrobial agent'))
+    reader.data['HmdbOntologyTerm'].append(
+        node('ONT:Emulsifier', name='Emulsifier', term_type='parent',
+             ontology_type='Industrial application'))
+    reader.data['HmdbOntologyParentEdge'].append(
+        edge('ONT:Industrial application', 'ONT:Emulsifier'))
+    reader.data['HmdbMetaboliteOntologyEdge'].append(
+        edge('HMDB:HMDB1', 'ONT:Emulsifier'))
+
+    path = tmp_path / 'curated-parents.sqlite'
+    export_sqlite(reader, path, gene_identity=identity, source_only=source_only,
+                  progress=lambda _: None)
+    with sqlite3.connect(path) as db:
+        actual = set(db.execute(
+            "SELECT HMDBOntologyType,commonName FROM ontology "
+            "WHERE HMDBOntologyType IN ('Industrial application','Organ and components')"))
+        assert actual == {(category, name) for category, names in terms.items()
+                          for name in names} | {
+                              (category, f'{name} example')
+                              for category, names in terms.items() for name in names}
+        linked = set(db.execute(
+            "SELECT a.rampCompoundId,o.commonName FROM analytehasontology a "
+            "JOIN ontology o USING (rampOntologyId) "
+            "WHERE o.commonName IN ('Antimicrobial agent','Endocrine gland')"))
+        assert linked == {
+            ('RAMP_C_000000001', 'Antimicrobial agent'),
+            ('RAMP_C_000000002', 'Antimicrobial agent'),
+            ('RAMP_C_000000001', 'Endocrine gland'),
+        }
+
+
+@pytest.mark.parametrize('source_only', [True, False])
 @pytest.mark.parametrize('source_policy', ['legacy', 'expanded'])
 def test_hmdb_source_terms_follow_selected_policy(tmp_path, source_only, source_policy):
     reader, identity = resolved_fixture(tmp_path)

@@ -147,10 +147,6 @@ class IdResolver(ABC):
                         first_match = matches[0]
                         new_id = first_match.match
 
-                        full_xref_list = list(set([
-                            EquivalentId.parse(equiv_id) for m in matches for equiv_id in m.equivalent_ids
-                        ]))
-
                         is_cross_type = self.canonical_class is not None and not isinstance(entry, self.canonical_class)
                         can_retype = self._can_retype_entry(entry) if is_cross_type else False
                         if is_cross_type and not allow_retype:
@@ -173,7 +169,16 @@ class IdResolver(ABC):
                                 entity_map[IdResolver.MatchKeys.unmatched][old_id] = new_entry
                             continue
 
-                        if old_id not in entity_map[IdResolver.MatchKeys.matched]:
+                        needs_match = old_id not in entity_map[IdResolver.MatchKeys.matched]
+                        needs_newborns = len(matches) > 1 and old_id not in entity_map[IdResolver.MatchKeys.newborns]
+                        if not needs_match and not needs_newborns:
+                            continue
+
+                        full_xref_list = list(set(
+                            EquivalentId.parse(equiv_id) for m in matches for equiv_id in m.equivalent_ids
+                        ))
+
+                        if needs_match:
 
                             if is_cross_type and allow_retype:
                                 first_entry = self._coerce_entry_to_canonical(entry, new_id, full_xref_list)
@@ -191,7 +196,7 @@ class IdResolver(ABC):
                             entity_map[IdResolver.MatchKeys.matched][old_id] = first_entry
 
                         if len(matches) > 1:
-                            if old_id not in entity_map[IdResolver.MatchKeys.newborns]:
+                            if needs_newborns:
 
                                 entity_map[IdResolver.MatchKeys.newborns][old_id] = []
                                 for subsequent_match in matches[1:]:
