@@ -265,8 +265,14 @@ The export now defaults to `--source-ontology-policy legacy`, applying the old
 Source allowlist before the denylist and expanding descendant associations to
 retained parents. `--source-ontology-policy expanded` selects all non-denied
 Source terms, including parents, and the manifest records the choice. Other
-ontology types keep their established leaf/Health-condition-parent rule. This is an export-only
-correction and does not require a graph or harmonization-stage rebuild.
+ontology types retain non-root parent and child terms unless excluded by the
+legacy denylist. The previous leaf-only rule omitted six terms retained in the
+November 2024 curated exclusion sheet and present in both released baselines:
+Antimicrobial agent, Antineoplastic agent, Cardiovascular drug, Household
+products, Pesticide, and Endocrine gland. Removing that restriction yields
+exactly the sheet's 168 retained terms with the current graph and policy. These
+are export-only corrections and do not require a graph or harmonization-stage
+rebuild.
 
 Validation on 2026-10-05:
 

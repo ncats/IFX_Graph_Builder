@@ -15,7 +15,9 @@ class InputAdapter(ABC):
     field_conflict_behavior: FieldConflictBehavior = FieldConflictBehavior.KeepFirst
 
     @staticmethod
-    def _canonicalize_relationship_class(rel: Relationship, start_node: Node, end_node: Node) -> Relationship:
+    def _canonicalize_relationship_class(
+        rel: Relationship, start_node: Node, end_node: Node, *, already_copied: bool = False
+    ) -> Relationship:
         from src.models.disease import GeneDiseaseEdge, ProteinDiseaseEdge
         from src.models.expression import GeneTissueExpressionEdge, ProteinTissueExpressionEdge
         from src.models.mouse_phenotype import GeneMousePhenotypeEdge, ProteinMousePhenotypeEdge
@@ -43,13 +45,13 @@ class InputAdapter(ABC):
             return rel
 
         remapped = target_cls(
-            start_node=copy.deepcopy(start_node),
-            end_node=copy.deepcopy(end_node),
+            start_node=start_node if already_copied else copy.deepcopy(start_node),
+            end_node=end_node if already_copied else copy.deepcopy(end_node),
         )
         for key, value in rel.__dict__.items():
             if key in {"start_node", "end_node"}:
                 continue
-            setattr(remapped, key, copy.deepcopy(value))
+            setattr(remapped, key, value if already_copied else copy.deepcopy(value))
         return remapped
 
     def get_name(self) -> str:
@@ -188,7 +190,9 @@ class InputAdapter(ABC):
                                 rel_copy.end_node = copy.deepcopy(end_node)
                             else:
                                 rel_copy.end_node.id = end_node.id
-                            rel_copy = self._canonicalize_relationship_class(rel_copy, rel_copy.start_node, rel_copy.end_node)
+                            rel_copy = self._canonicalize_relationship_class(
+                                rel_copy, rel_copy.start_node, rel_copy.end_node, already_copied=True
+                            )
                             return_relationships.append(rel_copy)
 
                     if len(return_relationships) >= self.batch_size:

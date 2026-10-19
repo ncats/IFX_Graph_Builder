@@ -33,7 +33,7 @@ input_adapters:
   - import: ./src/input_adapters/metabolite_harmonization/reactome_pathways.py
     class: ReactomePathwayContextAdapter
     kwargs:
-      data_source: reactome:pathways:97
+      data_source: reactome:pathways:97-bundle1
 
   - import: ./src/input_adapters/metabolite_harmonization/wikipathways.py
     class: WikiPathwaysMetaboliteEquivalenceAdapter

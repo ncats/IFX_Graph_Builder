@@ -1,5 +1,9 @@
 # RaMP builds
 
+For a completed SQLite that is ready for owner assessment and local packaging
+in `RaMP-DB/db/`, follow the
+[release-candidate playbook](../../../playbooks/ramp_release_candidate_playbook.md).
+
 `build_ramp.py` builds the `metabolite_harmonization` source graph. Run and
 validate the harmonization pipeline in the UI, then pass its completed stage
 ID to `build_sqlite.py`. The SQLite command exports every primary table,
@@ -271,7 +275,8 @@ allowlist to HMDB `Source` terms. This retains parent terms such as `Plant` and
 `Microbe` with descendant memberships while excluding unselected specific
 Source terms. `--source-ontology-policy expanded` retains all non-denied Source
 terms, including parents, and the chosen policy is recorded in the export
-manifest. Identical output rows are
+manifest. Other HMDB ontology types retain non-root parent and child terms
+unless excluded by the legacy denylist. Identical output rows are
 deduplicated; conflicting rows sharing a legacy primary key cause failure.
 
 ## Inspect and validate the output

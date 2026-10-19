@@ -12,10 +12,9 @@ resolvers:
     import: ./src/id_resolvers/target_graph_resolver.py
     class: TCRDTargetResolver
     kwargs:
-      gene_data_source: target_graph:gene_ids:2026-05-11
-      transcript_data_source: target_graph:transcript_ids:2026-05-11
-      protein_data_source: target_graph:protein_ids:2026-05-20
-      uniprot_mapping_data_source: target_graph:uniprot_mapping:2026-05-11
+      gene_data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.4.0}
+      transcript_data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.4.0}
+      protein_data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.4.0}
       collapse_to_canonical: true
       canonical_type: Protein
       types:

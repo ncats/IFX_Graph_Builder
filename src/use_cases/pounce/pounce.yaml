@@ -29,7 +29,7 @@ resolvers:
     import: ./src/id_resolvers/uniprot_resolver.py
     class: UniProtResolver
     kwargs:
-      data_source: uniprot:human:2026_02
+      data_source: uniprot:human:2026_03
       file_name: uniprot-human-reviewed.json.gz
       types:
         - Protein
@@ -38,7 +38,7 @@ input_adapters:
   - import: ./src/input_adapters/file_uniprot/protein_adapter.py
     class: ProteinAdapter
     kwargs:
-      data_source: uniprot:human:2026_02
+      data_source: uniprot:human:2026_03
       file_name: uniprot-human-reviewed.json.gz
 
   - import: ./src/input_adapters/ensembl/gene.py

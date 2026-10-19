@@ -5,7 +5,7 @@ from src.interfaces.id_resolver import IdResolver, IdMatch, NoMatchBehavior, Mul
 from src.interfaces.input_adapter import InputAdapter
 from src.models.datasource_version_info import DatasourceVersionInfo
 from src.models.disease import Disease, GeneDiseaseEdge, ProteinDiseaseEdge
-from src.models.expression import GeneTissueExpressionEdge, ProteinTissueExpressionEdge
+from src.models.expression import ExpressionDetail, GeneTissueExpressionEdge, ProteinTissueExpressionEdge
 from src.models.gene import Gene, MeasuredGene, MeasuredGeneEdge
 from src.models.mouse_phenotype import GeneMousePhenotypeEdge, MousePhenotype, ProteinMousePhenotypeEdge
 from src.models.ortholog import GeneOrthologGeneEdge, OrthologGene, ProteinOrthologGeneEdge
@@ -65,6 +65,48 @@ def test_input_adapter_remaps_gene_tissue_expression_edge_to_protein_edge():
 
     assert isinstance(rel, ProteinTissueExpressionEdge)
     assert rel.start_node.id == "IFXProtein:G1"
+
+
+def test_remapped_expression_edges_keep_independent_copies_for_multiple_matches():
+    class _MultiMatchResolver(_RetypeGeneResolver):
+        def resolve_internal(self, input_nodes):
+            return {
+                node.id: [
+                    IdMatch(node.id, "IFXProtein:P1", equivalent_ids=[f"NCBIGene:{node.id}"]),
+                    IdMatch(node.id, "IFXProtein:P2", equivalent_ids=[f"NCBIGene:{node.id}"]),
+                ]
+                for node in input_nodes
+            }
+
+    detail = ExpressionDetail(source="GTEx", number_value=2.0)
+    edge = GeneTissueExpressionEdge(
+        start_node=Gene(id="G1"), end_node=Tissue(id="UBERON:0001", name="source tissue"), details=[detail]
+    )
+    adapter = _SingleBatchAdapter([edge])
+    resolver = _MultiMatchResolver(
+        types=["Gene"],
+        no_match_behavior=NoMatchBehavior.Skip,
+        multi_match_behavior=MultiMatchBehavior.All,
+        canonical_class=Protein,
+    )
+
+    tissue_resolver = _IdentityResolver(
+        types=["Tissue"],
+        no_match_behavior=NoMatchBehavior.Skip,
+        multi_match_behavior=MultiMatchBehavior.All,
+    )
+    batches = list(adapter.get_resolved_and_provenanced_list({"Gene": resolver, "Tissue": tissue_resolver}))
+    remapped = batches[-1]
+
+    assert {rel.start_node.id for rel in remapped} == {"IFXProtein:P1", "IFXProtein:P2"}
+    assert all(isinstance(rel, ProteinTissueExpressionEdge) for rel in remapped)
+    assert all(rel.end_node.name == "source tissue" and rel.end_node.xref == [] for rel in remapped)
+    remapped[0].details[0].number_value = 9.0
+    remapped[0].start_node.id = "changed"
+    assert remapped[1].details[0].number_value == 2.0
+    assert remapped[1].start_node.id != "changed"
+    assert edge.details[0].number_value == 2.0
+    assert edge.start_node.id == "G1"
 
 
 def test_input_adapter_remaps_gene_disease_edge_to_protein_edge():

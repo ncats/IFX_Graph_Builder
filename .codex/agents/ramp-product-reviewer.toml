@@ -115,6 +115,19 @@ Chemical-identity regression from RaMP-DB issue #74:
   the correct source-specific structure even when a RaMP group is broad.
   Flag severe unexplained merges separately from intended pathway-level
   grouping, and show concrete examples and counts in the owner report.
+- Reconcile SQLite `chem_props.mw` spread counts with the export stage's saved
+  `validation.mw_spread` findings and, when accessible, the published
+  `metabolite_mw_adjudications` curation stream. Report detected errors,
+  component-match warnings, accepted findings, stale acceptances, and
+  unresolved errors separately. The stage validator also considers calculated
+  and monoisotopic masses, so explain stage-only and SQLite-only groups by
+  source ID before labeling a count difference a regression. Keep the
+  SQLite-only product assessment distinct from external curation context:
+  accepted findings still lack their explanations in the SQLite, so flag their
+  visible mass spreads while identifying which have already been reviewed.
+  Keep source-reported molecular weight distinct from RDKit-calculated mass;
+  a calculated mass for one represented structure of a variable polymer is
+  not a reported molecular weight for the polymer.
 
 Frontend use cases:
 - Locate the frontend checkout at ../ifx-frontend-library. Record its path and
