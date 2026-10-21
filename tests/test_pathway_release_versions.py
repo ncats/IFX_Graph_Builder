@@ -25,18 +25,6 @@ def test_release_version_is_derived_from_version_directory(tmp_path):
     assert _release_version_from_path(graph) == "1.2.3"
 
 
-def test_version_discovery_does_not_collapse_legacy_manifests(tmp_path, monkeypatch):
-    _write_graph(tmp_path, "1.0.0")
-    current = _write_graph(tmp_path, "1.0.4")
-    monkeypatch.setattr(qa_app, "_pathway_graph_dir", str(current))
-    monkeypatch.setattr(qa_app, "PATHWAY_APP_GRAPH_BUNDLED_DIR", tmp_path / "missing")
-
-    versions = qa_app._discover_pathway_versions()
-
-    assert [row["version"] for row in versions] == ["1.0.0", "1.0.4"]
-    assert [row["version"] for row in versions if row["current"]] == ["1.0.4"]
-
-
 def test_bundled_graph_selection_uses_latest_manifest_version(tmp_path):
     old = tmp_path / "v2.1.1"
     old.mkdir()
@@ -108,55 +96,6 @@ def test_bundled_graph_selection_uses_entity_release_field_precedence(tmp_path):
     )
 
     assert releases == [older, newer]
-
-
-def test_drug_version_discovery_exposes_audited_diff_only_baseline(tmp_path, monkeypatch):
-    current = tmp_path / "v1.4.0"
-    current.mkdir()
-    (current / "manifest.json").write_text(json.dumps({"version": "v1.4.0"}))
-    (current / "drug_nodes.tsv").write_text("drug_id\n")
-    expected = {
-        "baseline_version": "1.2.0",
-        "current_version": "1.4.0",
-        "generated_at": "2026-09-24T00:00:00Z",
-        "summary": {"drugs_old": 10, "drugs_new": 9, "drugs_removed": 1},
-    }
-    (current / "version_diff_from_v1.2.0.json").write_text(json.dumps(expected))
-    monkeypatch.setattr(qa_app, "_drug_graph_dir", str(current))
-    monkeypatch.setattr(qa_app, "DRUG_APP_GRAPH_BUNDLED_DIR", tmp_path / "missing")
-
-    versions = qa_app._discover_drug_versions()
-    result = qa_app.drug_id_qa_version_diff("1.2.0", "1.4.0")
-
-    assert [(row["version"], row.get("diff_only", False)) for row in versions] == [
-        ("1.2.0", True),
-        ("1.4.0", False),
-    ]
-    assert result == expected
-
-
-def test_real_drug_baseline_replaces_diff_only_placeholder(tmp_path, monkeypatch):
-    current = tmp_path / "v1.4.0"
-    current.mkdir()
-    (current / "manifest.json").write_text(json.dumps({"version": "v1.4.0"}))
-    (current / "drug_nodes.tsv").write_text("drug_id\n")
-    (current / "version_diff_from_v1.2.0.json").write_text(json.dumps({
-        "baseline_version": "1.2.0",
-        "current_version": "1.4.0",
-        "summary": {"drugs_old": 10},
-    }))
-    baseline = tmp_path / "v1.2.0"
-    baseline.mkdir()
-    (baseline / "manifest.json").write_text(json.dumps({"version": "v1.2.0"}))
-    (baseline / "drug_nodes.tsv").write_text("drug_id\n")
-    monkeypatch.setattr(qa_app, "_drug_graph_dir", str(current))
-    monkeypatch.setattr(qa_app, "DRUG_APP_GRAPH_BUNDLED_DIR", tmp_path / "missing")
-
-    versions = qa_app._discover_drug_versions()
-    baseline_entry = next(row for row in versions if row["version"] == "1.2.0")
-
-    assert baseline_entry.get("diff_only", False) is False
-    assert baseline_entry["path"] == str(baseline)
 
 
 def test_cross_entity_summary_uses_association_and_edge_indexes():

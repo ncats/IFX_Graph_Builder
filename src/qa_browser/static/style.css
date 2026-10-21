@@ -625,52 +625,6 @@ td.mono { font-family: var(--mono); font-size: 12px; }
     text-decoration: none;
 }
 
-.workflow-card-disease {
-    color: #ffffff;
-    background:
-        linear-gradient(90deg, rgba(7, 13, 36, 0.82) 0%, rgba(7, 13, 36, 0.55) 42%, rgba(7, 13, 36, 0.15) 100%),
-        url("images/disease-harmonizer.png");
-    background-size: cover;
-    background-position: center;
-    background-repeat: no-repeat;
-    border-color: rgba(139, 92, 246, 0.35);
-}
-
-.workflow-card-disease .db-name,
-.workflow-card-disease .db-card-footer {
-    color: #ffffff;
-    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
-}
-
-.workflow-card-disease:hover {
-    border-color: #a78bfa;
-    box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.28);
-    text-decoration: none;
-}
-
-.workflow-card-target {
-    color: #ffffff;
-    background:
-        linear-gradient(90deg, rgba(4, 12, 36, 0.84) 0%, rgba(4, 55, 82, 0.54) 45%, rgba(4, 80, 78, 0.18) 100%),
-        url("images/target-harmonizer.png");
-    background-size: cover;
-    background-position: center;
-    background-repeat: no-repeat;
-    border-color: rgba(45, 212, 191, 0.36);
-}
-
-.workflow-card-target .db-name,
-.workflow-card-target .db-card-footer {
-    color: #ffffff;
-    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
-}
-
-.workflow-card-target:hover {
-    border-color: #2dd4bf;
-    box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.24);
-    text-decoration: none;
-}
-
 .browser-hero {
     background:
         linear-gradient(90deg, rgba(255, 255, 255, 0.9) 0%, rgba(255, 255, 255, 0.68) 42%, rgba(255, 255, 255, 0.1) 100%),
@@ -9547,77 +9501,6 @@ body.nerd-mode .disease-id-page [data-mode="nerd"] {
     font-weight: 700;
 }
 
-
-.workflow-card-drug {
-    color: #ffffff;
-    background:
-        linear-gradient(90deg, rgba(2, 8, 23, 0.90) 0%, rgba(7, 22, 37, 0.70) 44%, rgba(15, 23, 42, 0.18) 100%),
-        url("images/drug-harmonizer.png");
-    background-position: center;
-    background-repeat: no-repeat;
-    background-size: cover;
-    border-color: rgba(45, 212, 191, 0.36);
-}
-
-.workflow-card-drug .db-name,
-.workflow-card-drug .db-card-footer {
-    color: #ffffff;
-    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
-}
-
-.workflow-card-drug:hover {
-    border-color: #2dd4bf;
-    box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.22);
-    text-decoration: none;
-}
-
-/* Variant Harmonizer Explorer */
-.workflow-card-variant {
-    color: #ffffff;
-    background:
-        linear-gradient(90deg, rgba(2, 8, 23, 0.90) 0%, rgba(4, 36, 58, 0.62) 44%, rgba(8, 95, 104, 0.18) 100%),
-        url("images/variant-harmonizer.png");
-    background-size: cover;
-    background-position: center;
-    background-repeat: no-repeat;
-    border-color: rgba(34, 211, 238, 0.34);
-}
-
-.workflow-card-variant .db-name,
-.workflow-card-variant .db-card-footer {
-    color: #ffffff;
-    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
-}
-
-.workflow-card-variant:hover {
-    border-color: #f59e0b;
-    box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.24);
-    text-decoration: none;
-}
-
-/* Pathway Harmonizer Explorer */
-.workflow-card-pathway {
-    color: #ffffff;
-    background:
-        linear-gradient(90deg, rgba(30, 15, 5, 0.88) 0%, rgba(60, 25, 8, 0.60) 44%, rgba(40, 18, 6, 0.18) 100%),
-        url("images/pathway-harmonizer.png");
-    background-size: cover;
-    background-position: center;
-    background-repeat: no-repeat;
-    border-color: rgba(245, 158, 11, 0.36);
-}
-
-.workflow-card-pathway .db-name,
-.workflow-card-pathway .db-card-footer {
-    color: #ffffff;
-    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
-}
-
-.workflow-card-pathway:hover {
-    border-color: #f59e0b;
-    box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.22);
-    text-decoration: none;
-}
 
 .variant-explorer-shell {
     display: grid;
