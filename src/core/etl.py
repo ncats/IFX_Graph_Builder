@@ -45,6 +45,22 @@ class ETL:
                 for output_adapter in self.output_adapters:
                     output_adapter.reset_run_state(effective_run_id)
 
+        if resume and any(
+            name.startswith("post:") for name in completed_adapters
+        ):
+            incomplete_inputs = [
+                adapter.get_name()
+                for adapter in self.input_adapters
+                if f"input:{adapter.get_name()}" not in completed_adapters
+                and adapter.get_name() not in completed_adapters
+            ]
+            if incomplete_inputs:
+                raise RuntimeError(
+                    "Cannot resume completed post adapters while primary adapters are incomplete: "
+                    + ", ".join(incomplete_inputs)
+                    + ". Run a fresh build."
+                )
+
         for output_adapter in self.output_adapters:
             output_adapter.do_pre_processing()
 
@@ -115,9 +131,7 @@ class ETL:
                     self.curation_snapshots,
                     phase="pre_post",
                 )
-        # Graph-dependent post adapters are intentionally rerun on resume. They are
-        # idempotent projections of the fully materialized primary graph.
-        run_adapter_phase(self.post_adapters, "post", allow_resume_skip=False)
+        run_adapter_phase(self.post_adapters, "post", allow_resume_skip=True)
 
         if self.curation_snapshots:
             for output_adapter in self.output_adapters:

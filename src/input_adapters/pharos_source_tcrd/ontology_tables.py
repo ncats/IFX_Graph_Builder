@@ -114,8 +114,8 @@ class MondoTableParentEdgeAdapter(MondoBaseAdapter):
 
 class DOTableAdapter(DODiseaseAdapter):
 
-    def _to_term(self, node: dict) -> DOTerm:
-        disease = self._to_disease(node)
+    def _to_term(self, term_id: str, term_data: dict) -> DOTerm:
+        disease = self._to_disease(term_id, term_data)
         return DOTerm(
             id=disease.id,
             name=disease.name,
@@ -123,29 +123,19 @@ class DOTableAdapter(DODiseaseAdapter):
         )
 
     def get_all(self) -> Generator[List[DOTerm], None, None]:
-        yield [self._to_term(node) for node in self._iter_included_do_nodes()]
+        yield [
+            self._to_term(term_id, term_data)
+            for term_id, term_data in self._iter_included_do_nodes()
+        ]
 
 
 class DOTableParentEdgeAdapter(DOBaseAdapter):
 
     def get_all(self) -> Generator[List[DOTermParentEdge], None, None]:
-        included_do_ids = self._included_do_ids()
-        edges: List[DOTermParentEdge] = []
-
-        for edge in self._get_graph().get("edges") or []:
-            if edge.get("pred") != "is_a":
-                continue
-
-            child_id = self._normalize_doid(edge.get("sub"))
-            parent_id = self._normalize_doid(edge.get("obj"))
-            if child_id is None or parent_id is None:
-                continue
-            if child_id not in included_do_ids or parent_id not in included_do_ids:
-                continue
-
-            edges.append(DOTermParentEdge(
+        yield [
+            DOTermParentEdge(
                 start_node=DOTerm(id=child_id),
                 end_node=DOTerm(id=parent_id),
-            ))
-
-        yield edges
+            )
+            for child_id, parent_id in self._iter_parent_pairs()
+        ]

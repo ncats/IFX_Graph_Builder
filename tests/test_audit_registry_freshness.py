@@ -24,6 +24,9 @@ def test_collects_all_registry_arguments_and_deduplicates() -> None:
                 }
             }
         ],
+        "post_adapters": [
+            {"kwargs": {"data_source": "target_graph:tdl_updates:2026-09-11"}},
+        ],
         "output_adapters": [
             {"kwargs": {"data_source": "ignored:output:1"}},
         ],
@@ -32,6 +35,7 @@ def test_collects_all_registry_arguments_and_deduplicates() -> None:
     assert audit_registry_freshness.collect_registry_references(config) == (
         SnapshotRef.source("uniprot:human:2026_02"),
         SnapshotRef.derived("pubchem:cid_molecular_info:deps-1"),
+        SnapshotRef.source("target_graph:tdl_updates:2026-09-11"),
     )
 
 
@@ -638,6 +642,64 @@ def test_shared_source_report_handles_unavailable_derived_dependencies() -> None
 
     assert audit_registry_freshness.compare_shared_source_pins(report) == ()
     assert audit_registry_freshness._unchecked_derived_roots(report) == (derived,)
+
+
+def test_historical_predecessor_does_not_count_as_unchecked_lineage() -> None:
+    current = SnapshotRef.derived("ifx:targets:2")
+    previous = SnapshotRef.derived("ifx:targets:1")
+    report = SimpleNamespace(
+        roots=(current,),
+        entries=(
+            SimpleNamespace(
+                reference=previous,
+                disposition=SimpleNamespace(value="historical"),
+                dependencies=(),
+            ),
+            SimpleNamespace(
+                reference=current,
+                disposition=AuditDisposition.UNVERIFIABLE,
+                dependencies=(previous,),
+            ),
+        ),
+    )
+
+    assert audit_registry_freshness._unchecked_derived_roots(report) == ()
+
+
+def test_shared_source_pins_ignore_historical_source_versions() -> None:
+    current = SnapshotRef.derived("ifx:targets:2")
+    previous = SnapshotRef.derived("ifx:targets:1")
+    old_source = SnapshotRef.source("hgnc:complete_set:2026-10-02")
+    current_source = SnapshotRef.source("hgnc:complete_set:2026-10-16")
+    report = SimpleNamespace(
+        roots=(current, current_source),
+        entries=(
+            SimpleNamespace(
+                reference=old_source,
+                disposition=AuditDisposition.CURRENT,
+                dependencies=(),
+            ),
+            SimpleNamespace(
+                reference=previous,
+                disposition=SimpleNamespace(value="historical"),
+                dependencies=(old_source,),
+            ),
+            SimpleNamespace(
+                reference=current_source,
+                disposition=AuditDisposition.CURRENT,
+                dependencies=(),
+            ),
+            SimpleNamespace(
+                reference=current,
+                disposition=AuditDisposition.CURRENT,
+                dependencies=(previous, current_source),
+            ),
+        ),
+    )
+
+    comparisons = audit_registry_freshness.compare_shared_source_pins(report)
+    assert len(comparisons) == 1
+    assert comparisons[0].dependency == current_source
 
 
 def test_nested_missing_lineage_is_reported_as_unchecked(capsys) -> None:

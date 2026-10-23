@@ -103,7 +103,7 @@ input_adapters:
   - import: ./src/input_adapters/go/go_gaf.py
     class: ProteinGoTermEdgeAdapter
     kwargs:
-      data_source: go:goa_human_uniprot:2026-07-28
+      data_source: go:goa_human_uniprot:2026-10-11
       source: UniProt
 
   - import: ./src/input_adapters/go/go_gaf.py

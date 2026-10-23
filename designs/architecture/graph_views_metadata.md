@@ -6,9 +6,9 @@ Add graph-owned live views/exports that `qa_browser` can discover and execute
 generically.
 
 
-The first target is `current_tdls`. Because TDL fields are populated in
-post-processing, that view should be declared in post-processing YAML such as
-[`pharos_aql_post.yaml`](/Users/kelleherkj/IdeaProjects/IFX_ODIN/src/use_cases/pharos/pharos_aql_post.yaml).
+The first target is `current_tdls`. The active Pharos builds now declare this
+view beside `post_adapters` in their primary YAML, for example
+[`pharos.yaml`](/Users/kelleherkj/IdeaProjects/IFX_ODIN/src/use_cases/pharos/pharos.yaml).
 
 ## Key Decisions
 
@@ -124,7 +124,7 @@ Suggested shape:
         "query_language": "aql",
         "columns": ["id", "uniprot_id", "tdl"],
         "query": "FOR pro IN `biolink:Protein` RETURN {...}",
-        "defined_in_yaml": "./src/use_cases/pharos/pharos_aql_post.yaml"
+        "defined_in_yaml": "./src/use_cases/pharos/pharos.yaml"
       }
     }
   }
@@ -185,9 +185,9 @@ are shown in the QA browser.
 
 ## Recommended First Implementation
 
-1. Add `graph_views` to:
-   - [`pharos_aql_post.yaml`](/Users/kelleherkj/IdeaProjects/IFX_ODIN/src/use_cases/pharos/pharos_aql_post.yaml)
-   - [`target_graph_aql_post.yaml`](/Users/kelleherkj/IdeaProjects/IFX_ODIN/src/use_cases/pharos/target_graph_aql_post.yaml)
+1. Add `graph_views` to the graph build YAML (currently
+   [`pharos.yaml`](/Users/kelleherkj/IdeaProjects/IFX_ODIN/src/use_cases/pharos/pharos.yaml)
+   and [`target_graph.yaml`](/Users/kelleherkj/IdeaProjects/IFX_ODIN/src/use_cases/pharos/target_graph.yaml)).
 2. Extend metadata writing so each ETL run merges its declared views into
    `metadata_store/graph_views`.
 3. Update `qa_browser` to list and execute advertised views generically.

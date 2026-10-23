@@ -8,11 +8,10 @@ This table is intentionally **protein-facing**. It is not a literal dump of raw 
 ## What To Read
 
 1. `src/use_cases/pharos/pharos.yaml`
-2. `src/use_cases/pharos/pharos_aql_post.yaml`
-3. `src/use_cases/pharos/tcrd.yaml`
-4. The adapter source files wired in those YAMLs
-5. `src/output_adapters/sql_converters/tcrd.py`
-6. When needed, the SQLAlchemy schema files under `src/shared/sqlalchemy_tables/`
+2. `src/use_cases/pharos/tcrd.yaml`
+3. The adapter source files wired in those YAMLs
+4. `src/output_adapters/sql_converters/tcrd.py`
+5. When needed, the SQLAlchemy schema files under `src/shared/sqlalchemy_tables/`
 
 ## Core Interpretation Rule
 
@@ -43,7 +42,7 @@ Columns: `Concept | Data Sources (→ graph) | Arango Type | MySQL Tables (graph
 
 - One row per concept.
 - Multiple sources can share the same row.
-- Post-processing adapters from `pharos_aql_post.yaml` stay below the separator row.
+- Post-processing adapters from `pharos.yaml`'s `post_adapters` section stay below the separator row.
 - Do not modify the Code Style TODOs section.
 - Do not modify the Planned Data Sources section while updating the table.
 
@@ -57,7 +56,7 @@ Columns: `Concept | Data Sources (→ graph) | Arango Type | MySQL Tables (graph
 
 ## Recommended Workflow
 
-1. Read the three YAML files to see what is wired.
+1. Read the two YAML files to see what is wired.
 2. Read each relevant adapter `get_all()` to see what nodes and edges it contributes.
 3. Apply the protein-facing side-lift rule where appropriate.
 4. Read the TCRD converter to see which concepts have downstream output.

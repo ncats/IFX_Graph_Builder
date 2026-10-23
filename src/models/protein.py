@@ -87,6 +87,7 @@ class IDGFamily(SimpleEnum):
     numeric_fields=["pm_score", "pt_score", "antibody_count", "novelty"])
 @search(text_fields=["name", "symbol", "preferred_symbol", "description", "gene_name", "uniprot_id", "ensembl_id", "refseq_id", "ncbi_id", "ncbi_gene_summary"])
 class Protein(Audited, Analyte):
+    target_payload: Optional[Dict[str, str]] = None
     preferred_symbol: Optional[str] = None
     protein_type: Optional[str] = None
     description: Optional[str] = None

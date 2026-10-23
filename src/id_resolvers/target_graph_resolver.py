@@ -122,18 +122,38 @@ class TCRDTargetResolver(TargetGraphResolver):
 
     def __init__(
         self,
-        gene_data_source,
-        transcript_data_source,
-        protein_data_source,
+        data_source,
         reviewed_only: bool = False,
         collapse_to_canonical: bool = False,
         canonical_type: str | None = None,
         **kwargs,
     ):
+        self._configure_sources(
+            gene_data_source=data_source,
+            transcript_data_source=data_source,
+            protein_data_source=data_source,
+            reviewed_only=reviewed_only,
+            collapse_to_canonical=collapse_to_canonical,
+            canonical_type=canonical_type,
+            **kwargs,
+        )
+
+    def _configure_sources(
+        self,
+        *,
+        gene_data_source,
+        transcript_data_source,
+        protein_data_source,
+        uniprot_mapping_data_source=None,
+        reviewed_only: bool,
+        collapse_to_canonical: bool,
+        canonical_type: str | None,
+        **kwargs,
+    ):
         gene_file_path = str(gene_data_source.file("gene_ids.tsv"))
         transcript_file_path = str(transcript_data_source.file("transcript_ids.tsv"))
         protein_file_paths = [str(protein_data_source.file("protein_ids.tsv"))]
-        additional_ids = str(protein_data_source.file("uniprot_mapping.csv"))
+        additional_ids = str((uniprot_mapping_data_source or protein_data_source).file("uniprot_mapping.csv"))
 
         self.parsers = []
         self.protein_parsers = [
@@ -145,6 +165,7 @@ class TCRDTargetResolver(TargetGraphResolver):
         self.reviewed_only = reviewed_only
 
         TargetGraphResolver.__init__(self, canonical_class=_resolve_canonical_class(canonical_type), **kwargs)
+
 
     def matching_ids(self) -> Generator[MatchingPair, Any, None]:
         transcript_ids, transcript_id_idx, _ = self.get_transcript_ids()
@@ -317,3 +338,31 @@ class TCRDTargetResolver(TargetGraphResolver):
 
             transcript_ids[transcript_id] = set(ids)
         return transcript_ids, transcript_id_idx, transcript_gene_map
+
+
+class LegacyTCRDTargetResolver(TCRDTargetResolver):
+    """Reconstruct historical graphs from the separate target ID snapshots."""
+
+    name = "Legacy TCRD Target Resolver"
+
+    def __init__(
+        self,
+        gene_data_source,
+        transcript_data_source,
+        protein_data_source,
+        uniprot_mapping_data_source=None,
+        reviewed_only: bool = False,
+        collapse_to_canonical: bool = False,
+        canonical_type: str | None = None,
+        **kwargs,
+    ):
+        self._configure_sources(
+            gene_data_source=gene_data_source,
+            transcript_data_source=transcript_data_source,
+            protein_data_source=protein_data_source,
+            uniprot_mapping_data_source=uniprot_mapping_data_source,
+            reviewed_only=reviewed_only,
+            collapse_to_canonical=collapse_to_canonical,
+            canonical_type=canonical_type,
+            **kwargs,
+        )

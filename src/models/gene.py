@@ -70,6 +70,7 @@ class Audited:
 @facets(category_fields=["symbol"])
 @search(text_fields=["symbol", "ncbi_gene_summary"])
 class Gene(Audited, Node):
+    target_payload: Optional[Dict[str, str]] = None
     location: Optional[GeneticLocation] = None
     publications: Optional[List[PublicationReference]] = None
     ncbi_gene_summary: Optional[str] = None

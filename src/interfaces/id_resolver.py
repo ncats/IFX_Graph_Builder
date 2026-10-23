@@ -106,7 +106,7 @@ class IdResolver(ABC):
         if self.canonical_class is None:
             return False
         canonical_fields = {f.name for f in fields(self.canonical_class)}
-        ignored_fields = {'id', 'xref', 'provenance', 'sources'}
+        ignored_fields = {'id', 'xref', 'xref_match_types', 'provenance', 'sources'}
         for f in fields(entry.__class__):
             if f.name in ignored_fields:
                 continue
@@ -121,7 +121,7 @@ class IdResolver(ABC):
         coerced.xref = full_xref_list
         canonical_fields = {f.name for f in fields(self.canonical_class)}
         for f in fields(entry.__class__):
-            if f.name in {'id', 'xref'}:
+            if f.name in {'id', 'xref', 'xref_match_types'}:
                 continue
             if f.name not in canonical_fields:
                 continue
@@ -181,11 +181,13 @@ class IdResolver(ABC):
                         if needs_match:
 
                             if is_cross_type and allow_retype:
-                                first_entry = self._coerce_entry_to_canonical(entry, new_id, full_xref_list)
+                                first_entry = self._coerce_entry_to_canonical(
+                                    entry, new_id, self._xrefs_for_match(first_match, full_xref_list)
+                                )
                             else:
                                 first_entry = copy.deepcopy(entry)
                                 first_entry.id = new_id
-                                first_entry.xref = full_xref_list
+                                first_entry.xref = self._xrefs_for_match(first_match, full_xref_list)
 
                             if new_id != old_id:
                                 first_entry.old_id = old_id
@@ -202,11 +204,13 @@ class IdResolver(ABC):
                                 for subsequent_match in matches[1:]:
                                     new_id = subsequent_match.match
                                     if is_cross_type and allow_retype:
-                                        new_entry = self._coerce_entry_to_canonical(entry, new_id, full_xref_list)
+                                        new_entry = self._coerce_entry_to_canonical(
+                                            entry, new_id, self._xrefs_for_match(subsequent_match, full_xref_list)
+                                        )
                                     else:
                                         new_entry = copy.deepcopy(entry)
                                         new_entry.id = new_id
-                                        new_entry.xref = full_xref_list
+                                        new_entry.xref = self._xrefs_for_match(subsequent_match, full_xref_list)
                                     new_entry.old_id = old_id
                                     if new_entry.id not in [node.id for node in
                                                             entity_map[IdResolver.MatchKeys.newborns][old_id]]:
@@ -218,6 +222,10 @@ class IdResolver(ABC):
                     entity_map[IdResolver.MatchKeys.unmatched][entry.id] = new_entry
         print(f"updated {updated_count} ids, validated {validated_count} ids")
         return entity_map
+
+    def _xrefs_for_match(self, match: IdMatch, merged_xrefs: List[EquivalentId]) -> List[EquivalentId]:
+        """Choose xrefs for one fan-out result; existing resolvers use the union."""
+        return merged_xrefs
 
     def parse_entity_map(self, entity_map):
         match_map = {k: [v] for k, v in entity_map[IdResolver.MatchKeys.matched].items()}

@@ -16,7 +16,7 @@ resolvers:
 
   - label: tcrd_targets
     import: ./src/id_resolvers/target_graph_resolver.py
-    class: TCRDTargetResolver
+    class: LegacyTCRDTargetResolver
     kwargs:
       gene_data_source: target_graph:gene_ids:2026-05-11
       transcript_data_source: target_graph:transcript_ids:2026-05-11

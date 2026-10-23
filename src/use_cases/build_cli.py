@@ -26,25 +26,37 @@ def confirm_truncate(database_name: str) -> bool:
     return response in {"y", "yes"}
 
 
-def _arango_database_exists(builder) -> bool | None:
-    from src.output_adapters.arango_output_adapter import ArangoOutputAdapter
+def _primary_arango_output_adapter(builder):
+    from src.interfaces.output_adapter import OutputAdapter
+    from src.shared.arango_adapter import ArangoAdapter
 
-    for output_adapter in builder.etl.output_adapters:
-        if not isinstance(output_adapter, ArangoOutputAdapter):
-            continue
-        sys_db = output_adapter.client.db(
-            "_system",
-            username=output_adapter.credentials.user,
-            password=output_adapter.credentials.password,
+    adapters = builder.etl.output_adapters
+    if len(adapters) != 1 or not (
+        isinstance(adapters[0], OutputAdapter)
+        and isinstance(adapters[0], ArangoAdapter)
+    ):
+        adapter_types = [type(adapter).__name__ for adapter in adapters]
+        raise ValueError(
+            f"{builder.yaml_file} must configure exactly one ArangoOutputAdapter "
+            f"for this build CLI; found {len(adapters)} output adapter(s): {adapter_types}"
         )
-        return sys_db.has_database(output_adapter.database_name)
-    return None
+    return adapters[0]
 
 
-def prepare_primary_builder(builder: BuildGraphFromYaml, *, resume: bool, yes: bool, database_name: str) -> bool:
+def _arango_database_exists(output_adapter) -> bool:
+    sys_db = output_adapter.client.db(
+        "_system",
+        username=output_adapter.credentials.user,
+        password=output_adapter.credentials.password,
+    )
+    return sys_db.has_database(output_adapter.database_name)
+
+
+def prepare_primary_builder(builder: BuildGraphFromYaml, *, resume: bool, yes: bool) -> bool:
+    output_adapter = _primary_arango_output_adapter(builder)
+    database_name = output_adapter.database_name
     if resume:
-        exists = _arango_database_exists(builder)
-        if exists is False:
+        if not _arango_database_exists(output_adapter):
             print(
                 f"Cannot resume '{database_name}' because the database does not exist yet. "
                 "Run without --resume for a fresh build."
@@ -69,7 +81,6 @@ def parse_common_build_args(build_name: str) -> argparse.Namespace:
 def run_arango_build_cli(
     *,
     build_name: str,
-    database_name: str,
     primary_yaml: str,
     post_yaml: str | None = None,
 ):
@@ -82,7 +93,6 @@ def run_arango_build_cli(
         primary_builder,
         resume=args.resume,
         yes=args.yes,
-        database_name=database_name,
     ):
         return
     primary_builder.do_etl(clean_edges=not bool(post_yaml), resume=args.resume)

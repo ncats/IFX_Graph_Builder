@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ db_name }} Build Status - QA Browser{% endblock %}
 {% block head %}
-{% if build_status and build_status.is_active %}
+{% if build_status and (build_status.is_active or build_status.overall_status == 'post_processing') %}
 <meta http-equiv="refresh" content="5">
 {% endif %}
 {% endblock %}
@@ -44,8 +44,8 @@
             <div class="label">Failed</div>
         </div>
         <div class="build-stat">
-            <div class="value">{{ build_status.seen_total }}/{{ build_status.known_total }}</div>
-            <div class="label">Adapters Seen</div>
+            <div class="value">{{ build_status.seen_total }}</div>
+            <div class="label">Steps Recorded</div>
         </div>
         <div class="build-stat">
             <div class="value">{{ "{:,}".format(build_status.total_records) }}</div>
@@ -60,7 +60,7 @@
         {% if build_status.etl_run_date %}
         · Final ETL metadata {{ build_status.etl_run_date }}
         {% endif %}
-        {% if build_status.is_active %}
+        {% if build_status.is_active or build_status.overall_status == 'post_processing' %}
         · Auto-refreshing every 5s
         {% endif %}
     </p>
@@ -90,8 +90,8 @@
                 <div class="label">Failed</div>
             </div>
             <div class="build-stat">
-                <div class="value">{{ run.seen_total }}/{{ run.known_total }}</div>
-                <div class="label">Adapters Seen</div>
+                <div class="value">{{ run.seen_total }}</div>
+                <div class="label">Steps Recorded</div>
             </div>
             <div class="build-stat">
                 <div class="value">{{ "{:,}".format(run.total_records) }}</div>
@@ -104,6 +104,8 @@
             · Updated {{ run.last_updated }}
             {% endif %}
         </p>
+        {% for phase in run.phases %}
+        <h3>{{ phase.label }} <span class="subtle">({{ phase.completed }}/{{ phase.known_total }} completed)</span></h3>
         <table>
             <thead>
                 <tr>
@@ -114,13 +116,13 @@
                 </tr>
             </thead>
             <tbody>
-                {% for adapter in run.adapters %}
+                {% for adapter in phase.adapters %}
                 <tr>
                     <td>
                         {% if adapter.adapter_position and adapter.adapter_total %}
                         <span class="subtle">[{{ adapter.adapter_position }}/{{ adapter.adapter_total }}]</span>
                         {% endif %}
-                        {{ adapter.name }}
+                        {{ adapter.display_name }}
                         {% if adapter.error_message %}
                         <div class="subtle">{{ adapter.error_message }}</div>
                         {% endif %}
@@ -144,6 +146,7 @@
                 {% endfor %}
             </tbody>
         </table>
+        {% endfor %}
     </div>
     {% endfor %}
 </div>

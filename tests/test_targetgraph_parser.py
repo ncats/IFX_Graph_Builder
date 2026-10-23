@@ -7,7 +7,7 @@ from src.shared.targetgraph_parser import TargetGraphAddtlProteinIDParser
 from src.input_adapters.target_graph.gene_transcript_edge import GeneTranscriptEdgeAdapter
 from src.input_adapters.target_graph.protein_nodes_and_edges import GeneProteinEdgeAdapter
 from src.id_resolvers.target_graph_resolver import (
-    TCRDTargetResolver, TargetGraphProteinResolver, TargetGraphResolver,
+    LegacyTCRDTargetResolver, TCRDTargetResolver, TargetGraphProteinResolver, TargetGraphResolver,
 )
 from src.output_adapters.arango_output_adapter import ArangoOutputAdapter
 
@@ -221,14 +221,18 @@ def test_protein_resolvers_read_mapping_from_the_same_release(tmp_path, monkeypa
     monkeypatch.setattr(TargetGraphResolver, "__init__", lambda self, **kwargs: None)
     bundle = Bundle()
     protein = TargetGraphProteinResolver(data_source=bundle)
-    tcrd = TCRDTargetResolver(
-        gene_data_source=bundle,
-        transcript_data_source=bundle,
-        protein_data_source=bundle,
-    )
+    tcrd = TCRDTargetResolver(data_source=bundle)
     expected = str(tmp_path / "uniprot_mapping.csv")
     assert protein.parsers[0].additional_id_file_path == expected
     assert tcrd.protein_parsers[0].additional_id_file_path == expected
+
+    legacy = LegacyTCRDTargetResolver(
+        gene_data_source=bundle,
+        transcript_data_source=bundle,
+        protein_data_source=bundle,
+        uniprot_mapping_data_source=bundle,
+    )
+    assert legacy.protein_parsers[0].additional_id_file_path == expected
 
     (tmp_path / "uniprot_mapping.csv").unlink()
     with pytest.raises(FileNotFoundError, match="uniprot_mapping.csv"):

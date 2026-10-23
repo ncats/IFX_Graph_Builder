@@ -14,13 +14,13 @@ at 2026-09-15 10:34 EDT. None currently meet that criterion.
 - [ ] `target_graph`
   - Last completed ETL metadata: 2026-07-10 14:35 EDT (pre-cutover).
   - Build: `src/use_cases/pharos/target_graph.yaml`
-  - Post-process: `src/use_cases/pharos/target_graph_aql_post.yaml`
+  - Post adapters and graph views are in the build YAML.
   - Registry changes: source-backed target, HCOP, and tissue resolvers;
     external and derived dataset references.
 - [ ] `pharos`
   - Last completed ETL metadata: 2026-07-08 10:13 EDT (pre-cutover).
   - Build: `src/use_cases/pharos/pharos.yaml`
-  - Post-process: `src/use_cases/pharos/pharos_aql_post.yaml`
+  - Post adapters and graph views are in the build YAML.
   - Registry changes: source-backed TCRD, HCOP, and tissue resolvers;
     external and derived dataset references.
   - Follow-up outside this checklist: rebuild/validate `pharos400` from this
@@ -68,7 +68,7 @@ Rebuild these only if they are still being used.
 - [ ] `impatient_pharos`
   - Last completed ETL metadata: 2026-06-18 05:46 EDT (pre-cutover).
   - Build: `src/use_cases/pharos/impatient_pharos.yaml`
-  - Post-process: `src/use_cases/pharos/impatient_pharos_aql_post.yaml`
+  - Post adapters and graph views are in the build YAML.
   - Registry changes: source-backed TCRD resolver plus explicit external
     dataset kinds.
 - [ ] `pharos_current_tdls_reconstruction`
@@ -83,7 +83,9 @@ Rebuild these only if they are still being used.
 
 - [ ] Run a fresh build, not `--resume`, so old Registry metadata and resolver
   fingerprints cannot survive from the pre-cutover graph.
-- [ ] Run the matching AQL post-processing configuration when one is listed.
+- [ ] Confirm configured post adapters completed; active Pharos and Target Graph
+  build scripts run them from the primary YAML. Older paired builds still run
+  their companion post-processing YAML.
 - [ ] Confirm `metadata_store/etl_metadata` records Registry datasets with both
   `kind` and `snapshot_id`.
 - [ ] Confirm resolver fingerprints contain `dataset_inputs` and no legacy

@@ -12,6 +12,7 @@ TARGET_GRAPH_VERSION = "1.0"
 class DataSourceName(SimpleEnum):
     NCATSPounce = "NCATSPounce"
     TargetGraph = "Pharos 4.0 CSV"
+    TargetHarmonizer = "IFX Harmonizers TARGETS"
     TargetGraphNCBI = "Pharos 4.0 CSV (NCBI)"
     ChEMBL = "ChEMBL"
     CCLE = "Cancer Cell Line Encyclopedia (CCLE)"

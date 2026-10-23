@@ -30,6 +30,7 @@ class TranscriptLocation:
 @dataclass
 @facets(category_fields=["support_level", "ensembl_version", "status", "is_canonical"])
 class Transcript(Audited, Node):
+    target_payload: Optional[Dict[str, str]] = None
     location: Optional[TranscriptLocation] = None
     ensembl_version: Optional[str] = None
     support_level: Optional[str] = None
@@ -43,12 +44,18 @@ class Transcript(Audited, Node):
 class ParentLinkDetail:
     resolution_source: str
     confidence: str
+    subject_id: Optional[str] = None
+    predicate: Optional[str] = None
+    biolink_predicate: Optional[str] = None
+    object_id: Optional[str] = None
+    relation_kind: Optional[str] = None
+    status: Optional[str] = None
+    evidence_source: Optional[str] = None
+    evidence: Optional[str] = None
+    source_version: Optional[str] = None
 
     def to_dict(self) -> Dict[str, str]:
-        return {
-            "resolution_source": self.resolution_source,
-            "confidence": self.confidence,
-        }
+        return {key: value for key, value in vars(self).items() if value is not None}
 
 
 @dataclass
@@ -61,6 +68,7 @@ class GeneTranscriptEdge(Relationship, Audited):
 class TranscriptProteinEdge(Relationship, Audited):
     start_node: Transcript = None
     end_node: Protein = None
+    details: List[ParentLinkDetail] = field(default_factory=list)
 
 @dataclass
 class GeneProteinEdge(Relationship, Audited):
@@ -72,4 +80,5 @@ class GeneProteinEdge(Relationship, Audited):
 class IsoformProteinEdge(Relationship, Audited):
     start_node: Protein = None
     end_node: Protein = None
+    details: List[ParentLinkDetail] = field(default_factory=list)
 

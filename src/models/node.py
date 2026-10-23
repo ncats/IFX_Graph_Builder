@@ -134,6 +134,7 @@ class EquivalentId:
 class Node:
     id: str
     xref: Optional[List[EquivalentId]] = field(default_factory=list)
+    xref_match_types: dict[str, list[str]] = field(default_factory=dict, kw_only=True)
     provenance: Optional[str] = None
     sources: List[str] = field(default_factory=list)
 

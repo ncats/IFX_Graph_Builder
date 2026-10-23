@@ -1,6 +1,7 @@
 source_credentials: &source_credentials ./src/use_cases/secrets/ifxdev_arangodb.yaml
 legacy_pharos_credentials: &legacy_pharos_credentials ./src/use_cases/secrets/pharos_credentials.yaml
 database_name: &database_name pharos
+targets_release: &targets_release {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.5.2}
 pchembl_cutoff: &pchembl_cutoff 5
 
 registry:
@@ -19,9 +20,7 @@ resolvers:
     import: ./src/id_resolvers/target_graph_resolver.py
     class: TCRDTargetResolver
     kwargs:
-      gene_data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.4.0}
-      transcript_data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.4.0}
-      protein_data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.4.0}
+      data_source: *targets_release
       collapse_to_canonical: true
       canonical_type: Protein
       types:
@@ -67,7 +66,7 @@ input_adapters:
   - import: ./src/input_adapters/target_graph/protein_nodes_and_edges.py
     class: ProteinNodeAdapter
     kwargs:
-      data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.4.0}
+      data_source: *targets_release
       canonical_only: true
 
   - import: ./src/input_adapters/file_uniprot/protein_adapter.py
@@ -119,7 +118,7 @@ input_adapters:
   - import: ./src/input_adapters/mgi/hmd_human_phenotype.py
     class: HMDHumanPhenotypeAdapter
     kwargs:
-      data_source: mgi:hmd_human_phenotype:2026-10-05
+      data_source: mgi:hmd_human_phenotype:2026-10-19
 
   - import: ./src/input_adapters/string/string_ppi.py
     class: StringPPIAdapter
@@ -174,13 +173,13 @@ input_adapters:
   - import: ./src/input_adapters/iuphar/ligand_node.py
     class: LigandNodeAdapter
     kwargs:
-      data_source: iuphar:ligands_interactions:2026-09-16
+      data_source: iuphar:ligands_interactions:2026-10-20
 
   - import: ./src/input_adapters/iuphar/protein_ligand_edge.py
     class: ProteinLigandEdgeAdapter
     kwargs:
       pchembl_cutoff: *pchembl_cutoff
-      data_source: iuphar:ligands_interactions:2026-09-16
+      data_source: iuphar:ligands_interactions:2026-10-20
 
   - import: ./src/input_adapters/chembl/drug_node.py
     class: DrugNodeAdapter
@@ -204,7 +203,7 @@ input_adapters:
   - import: ./src/input_adapters/jensenlab/total_pmscore.py
     class: TotalPMScoreAdapter
     kwargs:
-      data_source: jensenlab:protein_counts:2026-10-04
+      data_source: jensenlab:protein_counts:2026-10-22
 
   - import: ./src/input_adapters/pubtator/publication_statistics.py
     class: PubTatorPublicationStatisticsAdapter
@@ -215,19 +214,19 @@ input_adapters:
   - import: ./src/input_adapters/jensenlab/tissues_expression.py
     class: JensenLabTissuesExpressionAdapter
     kwargs:
-      data_source: jensenlab:tissues:2026-10-05
+      data_source: jensenlab:tissues:2026-10-22
       obo_data_source: uberon:ontology:2026-10-01
 
   - import: ./src/input_adapters/antibodypedia/antibody_count.py
     class: AntibodyCountAdapter
     kwargs:
-      data_source: {kind: derived_snapshot, snapshot_id: antibodypedia:scraped_results:2026-10-09_21-18-ifxprotein-2.4.0}
+      data_source: {kind: derived_snapshot, snapshot_id: antibodypedia:scraped_results:2026-10-23_14-23-ifxprotein-2.5.2}
       identifier_mode: ifx_protein
 
   - import: ./src/input_adapters/go/go_gaf.py
     class: ProteinGoTermEdgeAdapter
     kwargs:
-      data_source: go:goa_human_uniprot:2026-07-28
+      data_source: go:goa_human_uniprot:2026-10-11
       source: UniProt
 
   - import: ./src/input_adapters/go/go_gaf.py
@@ -264,7 +263,7 @@ input_adapters:
   - import: ./src/input_adapters/jensenlab/diseases.py
     class: JensenLabDiseasesAdapter
     kwargs:
-      data_source: jensenlab:diseases:2026-10-04
+      data_source: jensenlab:diseases:2026-10-23
       textmining_min_zscore: 6.0
 
   - import: ./src/input_adapters/pharos_mysql/eram_disease_adapter.py
@@ -287,7 +286,7 @@ input_adapters:
   - import: ./src/input_adapters/jensenlab/tinx.py
     class: TINXAdapter
     kwargs:
-      data_source: jensenlab:tinx:2026-10-04
+      data_source: jensenlab:tinx:2026-10-22
 
   - import: ./src/input_adapters/tiga/tiga.py
     class: TIGAAdapter
@@ -297,11 +296,11 @@ input_adapters:
   - import: ./src/input_adapters/pharos_linkouts/linkouts.py
     class: PharosExternalLinkAdapter
     kwargs:
-      protein_data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.4.0}
+      protein_data_source: *targets_release
       glygen_data_source: glygen:proteins:0a30c984d41c68500790b376e3644145
-      dark_kinome_data_source: dark_kinome:kinases:capture_20261009T185302Z
-      resolute_data_source: resolute:genes:capture_20261009T185323Z
-      linkedomics_data_source: linkedomics:genes:capture_20261009T185345Z
+      dark_kinome_data_source: dark_kinome:kinases:capture_20261023T175834Z
+      resolute_data_source: resolute:genes:capture_20261023T175838Z
+      linkedomics_data_source: linkedomics:genes:capture_20261023T175839Z
       tiga_data_source: tiga:gene_trait:20260720
       canonical_only: true
 
@@ -323,12 +322,12 @@ input_adapters:
   - import: ./src/input_adapters/wikipathways/wikipathways_pathways.py
     class: WikiPathwaysPathwayAdapter
     kwargs:
-      data_source: wikipathways:human_gmt:2026-09-10
+      data_source: wikipathways:human_gmt:2026-10-10
 
   - import: ./src/input_adapters/wikipathways/wikipathways_pathways.py
     class: WikiPathwaysGenePathwayEdgeAdapter
     kwargs:
-      data_source: wikipathways:human_gmt:2026-09-10
+      data_source: wikipathways:human_gmt:2026-10-10
 
   - import: ./src/input_adapters/pathwaycommons/pathwaycommons_pathways.py
     class: PathwayCommonsPathwayAdapter
@@ -371,12 +370,12 @@ input_adapters:
   - import: ./src/input_adapters/ncbi/publications.py
     class: NCBIPublicationAdapter
     kwargs:
-      data_source: ncbi:publications:2026-10-05
+      data_source: ncbi:publications:2026-10-23
 
   - import: ./src/input_adapters/ncbi/gene_summary.py
     class: NCBIGeneSummaryAdapter
     kwargs:
-      data_source: ncbi:gene_summary:2026-10-05
+      data_source: ncbi:gene_summary:2026-10-23
 
   - import: ./src/input_adapters/pharos_mysql/idg_family_adapter.py
     class: IDGFamilyAdapter
@@ -387,7 +386,92 @@ input_adapters:
   - import: ./src/input_adapters/jensenlab/publications.py
     class: JensenLabPublicationAdapter
     kwargs:
-      data_source: jensenlab:tinx:2026-10-04
+      data_source: jensenlab:tinx:2026-10-22
+
+post_adapters:
+
+  - import: ./src/input_adapters/pharos_arango/set_preferred_symbol.py
+    class: SetPreferredSymbolAdapter
+    kwargs:
+      database_name: *database_name
+    credentials: *source_credentials
+
+  - import: ./src/input_adapters/pharos_arango/set_ligand_activity_flag.py
+    class: SetLigandActivityFlagAdapter
+    kwargs:
+      database_name: *database_name
+    credentials: *source_credentials
+
+  - import: ./src/input_adapters/pharos_arango/set_go_term_leaf_flag.py
+    class: SetGoTermLeafFlagAdapter
+    kwargs:
+      database_name: *database_name
+    credentials: *source_credentials
+
+  - import: ./src/input_adapters/pharos_arango/tdl_input_adapter.py
+    class: TDLInputAdapter
+    kwargs:
+      database_name: *database_name
+      use_pharos_queries: True
+    credentials: *source_credentials
+
+  - import: ./src/input_adapters/manual/tdl_override.py
+    class: TDLOverrideAdapter
+    kwargs:
+      data_source: target_graph:tdl_updates:2026-09-11
+
+graph_views:
+  - id: current_tdls
+    label: Current TDLs
+    description: Export current protein TDL assignments
+    type: export
+    output_format: csv
+    query_language: aql
+    columns:
+      - id
+      - uniprot_id
+      - tdl
+      - uniprot_reviewed
+      - uniprot_annotationScore
+      - name
+      - xref
+      - idg_family
+      - uniprot_function
+      - symbol
+      - ncbi_id
+      - ensembl_id
+      - canonical_isoform_status
+      - uniprot_isoform
+      - tdl_ligand_count
+      - tdl_drug_count
+      - tdl_go_term_count
+      - tdl_generif_count
+      - tdl_pm_score
+      - tdl_antibody_count
+    query: |
+      FOR pro IN `Protein`
+        RETURN {
+          id: pro.id,
+          uniprot_id: pro.uniprot_id,
+          tdl: pro.tdl,
+          uniprot_reviewed: pro.uniprot_reviewed,
+          uniprot_annotationScore: pro.uniprot_annotationScore,
+          name: pro.name,
+          xref: pro.xref,
+          idg_family: pro.idg_family,
+          uniprot_function: pro.uniprot_function,
+          symbol: pro.symbol,
+          ncbi_id: pro.ncbi_id,
+          ensembl_id: pro.ensembl_id,
+          canonical_isoform_status: pro.canonical_isoform_status,
+          uniprot_isoform: pro.uniprot_isoform,
+          tdl_ligand_count: pro.tdl_meta.tdl_ligand_count,
+          tdl_drug_count: pro.tdl_meta.tdl_drug_count,
+          tdl_go_term_count: pro.tdl_meta.tdl_go_term_count,
+          tdl_generif_count: pro.tdl_meta.tdl_generif_count,
+          tdl_pm_score: pro.tdl_meta.tdl_pm_score,
+          tdl_antibody_count: pro.tdl_meta.tdl_antibody_count
+        }
 
 output_adapters:
   - import: ./src/output_adapters/arango_output_adapter.py

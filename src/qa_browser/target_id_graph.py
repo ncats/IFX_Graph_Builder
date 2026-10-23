@@ -3424,7 +3424,7 @@ TDL_COLOR_MAP = {
     "Unknown": "#999999",
 }
 
-# AQL mirrors the current_tdls graph view in target_graph_aql_post.yaml
+# AQL mirrors the current_tdls graph view in target_graph.yaml
 _CURRENT_TDLS_AQL = """\
 FOR pro IN `Protein`
   RETURN {

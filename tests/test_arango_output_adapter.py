@@ -1,7 +1,9 @@
 import json
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
+from typing import List, Optional
 
 import pytest
 
@@ -11,6 +13,7 @@ from src.core.curations import (
     METABOLITE_RECORD_PROPERTIES,
     record_property_decisions_from_operation,
 )
+from src.core.decorators import facets, indexed
 from src.models.protein import Protein
 from src.models.test_models import TestEdge, TestNode
 from src.interfaces.resolver_metadata import resolver_fingerprints_by_type
@@ -323,7 +326,7 @@ def test_arango_output_adapter_merges_existing_resolver_metadata_for_post_proces
             "by_type": existing,
         },
         {
-            "source_yaml": "./src/use_cases/pharos/pharos_aql_post.yaml",
+            "source_yaml": "legacy_post.yaml",
             "by_type": current,
         },
     )
@@ -331,7 +334,7 @@ def test_arango_output_adapter_merges_existing_resolver_metadata_for_post_proces
     assert sorted(merged["by_type"]) == ["Disease", "Gene", "Protein", "Transcript"]
     assert merged["source_yamls"] == [
         "./src/use_cases/pharos/pharos.yaml",
-        "./src/use_cases/pharos/pharos_aql_post.yaml",
+        "legacy_post.yaml",
     ]
     assert merged["summary"]["Disease"]["class"] == "DiseaseIdResolver"
     assert merged["summary"]["Protein"]["class"] == "TCRDTargetResolver"
@@ -929,3 +932,58 @@ def test_apply_curations_aborts_transaction_when_a_later_mutation_fails():
 
     assert db.aborted is True
     assert db.committed is False
+
+
+def test_node_xrefs_use_array_member_index():
+    class Collection:
+        def __init__(self):
+            self.created = []
+
+        def indexes(self):
+            return [{"fields": ["xref"]}]
+
+        def add_hash_index(self, **kwargs):
+            self.created.append(("hash", kwargs))
+
+        def add_persistent_index(self, **kwargs):
+            self.created.append(("persistent", kwargs))
+
+    adapter = ArangoOutputAdapter.__new__(ArangoOutputAdapter)
+    collection = Collection()
+
+    adapter.create_indexes(Protein, collection)
+
+    assert ("persistent", {"fields": ["xref[*]"], "sparse": True}) in collection.created
+    assert ("persistent", {"fields": ["sources[*]"], "sparse": True}) in collection.created
+    assert not any(kind == "hash" and call["fields"] == ["xref[*]"] for kind, call in collection.created)
+
+
+def test_marked_list_fields_expand_once_and_existing_array_index_is_reused():
+    @dataclass
+    @indexed(fields=["tags", "label"])
+    @facets(category_fields=["tags"], numeric_fields=["scores"])
+    class IndexedSample:
+        tags: List[str] = field(default_factory=list)
+        scores: Optional[List[int]] = field(default_factory=list)
+        label: str = ""
+
+    class Collection:
+        def __init__(self):
+            self.created = []
+
+        def indexes(self):
+            return [{"fields": ["tags[*]"]}]
+
+        def add_hash_index(self, **kwargs):
+            self.created.append(("hash", kwargs))
+
+        def add_persistent_index(self, **kwargs):
+            self.created.append(("persistent", kwargs))
+
+    collection = Collection()
+    ArangoOutputAdapter.__new__(ArangoOutputAdapter).create_indexes(IndexedSample, collection)
+
+    assert collection.created == [
+        ("hash", {"fields": ["label"], "sparse": True}),
+        ("persistent", {"fields": ["scores[*]"], "sparse": True}),
+    ]

@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}{{ lookup_id }} matches - {{ coll_name }} - QA Browser{% endblock %}
+
+{% block breadcrumb %}
+<span class="sep">/</span>
+<a href="{{ root_path }}/qa-browser">QA Browser</a>
+<span class="sep">/</span>
+<a href="{{ root_path }}/db/{{ db_name }}">{{ db_name }}</a>
+<span class="sep">/</span>
+<a href="{{ root_path }}/db/{{ db_name }}/collection/{{ coll_name }}">{{ coll_name }}</a>
+<span class="sep">/</span>
+<span>{{ lookup_id }}</span>
+{% endblock %}
+
+{% block content %}
+<h1>More than one {{ coll_name }} matches {{ lookup_id }}</h1>
+<p>Choose a canonical document:</p>
+<div class="card">
+    <ul>
+        {% for choice in choices %}
+        <li>
+            <a href="{{ root_path }}/db/{{ db_name|urlencode }}/collection/{{ coll_name|urlencode }}/doc/{{ choice._key|urlencode }}">{{ choice.id or choice._key }}</a>
+            {% if choice.symbol or choice.name %} · {{ choice.symbol or choice.name }}{% endif %}
+            {% if choice.match_types %} · {{ choice.match_types|join(", ") }}{% endif %}
+        </li>
+        {% endfor %}
+    </ul>
+    {% if more_matches %}<p>Showing the first 50 matches.</p>{% endif %}
+</div>
+{% endblock %}

@@ -8983,13 +8983,19 @@ def _summarize_checkpoint(checkpoint: dict) -> dict:
     completed = 0
     running = 0
     failed = 0
-    total = 0
+    phase_totals = {"input": 0, "post": 0}
     total_records = 0
 
     for adapter_name, metadata in sorted(
         adapters.items(),
-        key=lambda item: (item[1].get("adapter_position") or 10**9, item[0])
+        key=lambda item: (
+            1 if item[0].startswith("post:") else 0,
+            item[1].get("adapter_position") or 10**9,
+            item[0],
+        )
     ):
+        phase = "post" if adapter_name.startswith("post:") else "input"
+        display_name = adapter_name.split(":", 1)[1] if adapter_name.startswith(("input:", "post:")) else adapter_name
         status = metadata.get("status", "unknown")
         if status == "completed":
             completed += 1
@@ -8997,10 +9003,12 @@ def _summarize_checkpoint(checkpoint: dict) -> dict:
             running += 1
         elif status == "failed":
             failed += 1
-        total = max(total, metadata.get("adapter_total") or 0)
+        phase_totals[phase] = max(phase_totals[phase], metadata.get("adapter_total") or 0)
         total_records += metadata.get("records_written") or 0
         rows.append({
             "name": adapter_name,
+            "display_name": display_name,
+            "phase": phase,
             "status": status,
             "adapter_position": metadata.get("adapter_position"),
             "adapter_total": metadata.get("adapter_total"),
@@ -9015,8 +9023,17 @@ def _summarize_checkpoint(checkpoint: dict) -> dict:
             ),
         })
 
-    if not total:
-        total = len(rows)
+    phases = []
+    for phase, label in (("input", "Input adapters"), ("post", "Post adapters")):
+        phase_rows = [row for row in rows if row["phase"] == phase]
+        if phase_rows or phase_totals[phase]:
+            phases.append({
+                "label": label,
+                "adapters": phase_rows,
+                "completed": sum(row["status"] == "completed" for row in phase_rows),
+                "known_total": phase_totals[phase] or len(phase_rows),
+            })
+    total = sum(phase["known_total"] for phase in phases)
 
     run_id = checkpoint.get("run_id")
     run_name = (run_id or checkpoint.get("_key") or "Unknown run").split("/")[-1]
@@ -9027,6 +9044,7 @@ def _summarize_checkpoint(checkpoint: dict) -> dict:
         "run_label": run_name,
         "last_updated": checkpoint.get("last_updated"),
         "adapters": rows,
+        "phases": phases,
         "completed": completed,
         "running": running,
         "failed": failed,
@@ -9037,7 +9055,7 @@ def _summarize_checkpoint(checkpoint: dict) -> dict:
         "status": (
             "failed" if failed > 0 else
             "running" if running > 0 else
-            "completed" if completed > 0 and completed >= total else
+            "adapters_complete" if completed > 0 and completed >= total else
             "partial" if completed > 0 else
             "unknown"
         ),
@@ -9075,15 +9093,14 @@ def _get_build_status(db) -> Optional[dict]:
     latest_checkpoint = checkpoints[0]
     checkpoint_updated_dt = _parse_iso_datetime(latest_checkpoint.get("last_updated"))
     etl_run_dt = _parse_iso_datetime((etl_meta or {}).get("run_date"))
-    any_failed = any(summary["failed"] > 0 for summary in run_summaries)
-    any_running = any(summary["running"] > 0 for summary in run_summaries)
-    any_partial = any(
-        summary["completed"] > 0 and summary["completed"] < summary["known_total"]
-        for summary in run_summaries
-    )
-    all_complete = bool(run_summaries) and all(
-        summary["completed"] >= summary["known_total"] and summary["known_total"] > 0
-        for summary in run_summaries
+    latest_run = run_summaries[0]
+    any_failed = latest_run["failed"] > 0
+    any_running = latest_run["running"] > 0
+    any_partial = latest_run["completed"] > 0
+    metadata_is_current = bool(
+        etl_run_dt
+        and (checkpoint_updated_dt is None or etl_run_dt >= checkpoint_updated_dt)
+        and (etl_meta or {}).get("source_yaml") == latest_checkpoint.get("run_id")
     )
 
     if any_failed:
@@ -9092,13 +9109,13 @@ def _get_build_status(db) -> Optional[dict]:
     elif any_running:
         overall_status = "running"
         overall_message = "One or more ETL runs are still running."
-    elif all_complete:
-        if etl_run_dt and (checkpoint_updated_dt is None or etl_run_dt >= checkpoint_updated_dt):
-            overall_status = "completed"
-            overall_message = "ETL and post-processing completed."
-        else:
-            overall_status = "post_processing"
-            overall_message = "Adapters completed. Post-processing or cleanup is still running."
+    elif metadata_is_current:
+        overall_status = "completed"
+        overall_message = "ETL and post-processing completed."
+        latest_run["status"] = "completed"
+    elif latest_run["completed"] >= latest_run["known_total"] and latest_run["known_total"]:
+        overall_status = "post_processing"
+        overall_message = "Recorded adapters completed. More adapters or cleanup may still be running."
     elif any_partial:
         overall_status = "partial"
         overall_message = "Some ETL runs are only partially complete."
@@ -9109,14 +9126,14 @@ def _get_build_status(db) -> Optional[dict]:
     return {
         "run_id": latest_checkpoint.get("run_id"),
         "last_updated": latest_checkpoint.get("last_updated"),
-        "etl_run_date": (etl_meta or {}).get("run_date"),
+        "etl_run_date": (etl_meta or {}).get("run_date") if metadata_is_current else None,
         "runs": run_summaries,
-        "completed": sum(summary["completed"] for summary in run_summaries),
-        "running": sum(summary["running"] for summary in run_summaries),
-        "failed": sum(summary["failed"] for summary in run_summaries),
-        "known_total": sum(summary["known_total"] for summary in run_summaries),
-        "seen_total": sum(summary["seen_total"] for summary in run_summaries),
-        "total_records": sum(summary["total_records"] for summary in run_summaries),
+        "completed": latest_run["completed"],
+        "running": latest_run["running"],
+        "failed": latest_run["failed"],
+        "known_total": latest_run["known_total"],
+        "seen_total": latest_run["seen_total"],
+        "total_records": latest_run["total_records"],
         "is_active": any_running,
         "overall_status": overall_status,
         "overall_message": overall_message,
@@ -11135,6 +11152,21 @@ async def publish_record_curation_cart(request: Request):
     return await ramp_id_qa_publish_curation_cart(request)
 
 
+def _documents_matching_xref(db, coll_name: str, lookup_id: str) -> list[dict]:
+    """Find documents in one collection that publish this exact lookup ID."""
+    return list(db.aql.execute(
+        """
+        FOR d IN @@collection
+            FILTER @lookup_id IN d.xref
+            SORT d._key
+            LIMIT 51
+            RETURN KEEP(d, "_key", "id", "name", "symbol", "xref_match_types")
+        """,
+        bind_vars={"@collection": coll_name, "lookup_id": lookup_id},
+        max_runtime=20,
+    ))
+
+
 @app.get("/db/{db_name}/collection/{coll_name}/doc/{doc_key:path}", response_class=HTMLResponse)
 async def document_detail(request: Request, db_name: str, coll_name: str, doc_key: str):
     db = get_db(db_name)
@@ -11144,6 +11176,31 @@ async def document_detail(request: Request, db_name: str, coll_name: str, doc_ke
         doc = coll.get(doc_key)
     except Exception:
         doc = None
+
+    if doc is None and db.has_collection(coll_name) and coll.properties().get("type") not in ("edge", 3):
+        matches = _documents_matching_xref(db, coll_name, doc_key)
+        if len(matches) == 1:
+            canonical_key = matches[0]["_key"]
+            return _redirect_to(
+                f"/db/{url_quote(db_name, safe='')}/collection/{url_quote(coll_name, safe='')}/doc/"
+                f"{url_quote(canonical_key, safe='')}?{urlencode({'resolved_from': doc_key})}",
+                request=request,
+            )
+        if len(matches) > 1:
+            choices = []
+            for match in matches[:50]:
+                match_types = sorted(
+                    match_type for match_type, ids in (match.get("xref_match_types") or {}).items()
+                    if doc_key in ids
+                )
+                choices.append({**match, "match_types": match_types})
+            return templates.TemplateResponse(request, "document_xref_choices.html", {
+                "db_name": db_name,
+                "coll_name": coll_name,
+                "lookup_id": doc_key,
+                "choices": choices,
+                "more_matches": len(matches) > 50,
+            })
 
     is_edge = coll.properties().get("type") in ("edge", 3) if doc else False
 
@@ -11340,6 +11397,11 @@ async def document_detail(request: Request, db_name: str, coll_name: str, doc_ke
         "coll_name": coll_name,
         "doc": doc,
         "doc_key": doc_key,
+        "resolved_from": (
+            request.query_params.get("resolved_from")
+            if doc and request.query_params.get("resolved_from") in (doc.get("xref") or [])
+            else None
+        ),
         "is_edge": is_edge,
         "sources": sources,
         "scalar_fields": scalar_fields,

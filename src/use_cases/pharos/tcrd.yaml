@@ -27,9 +27,7 @@ resolvers:
     import: ./src/id_resolvers/target_graph_resolver.py
     class: TCRDTargetResolver
     kwargs:
-      gene_data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.4.0}
-      transcript_data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.4.0}
-      protein_data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.4.0}
+      data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.5.2}
       collapse_to_canonical: true
       canonical_type: Protein
       types:
@@ -184,7 +182,7 @@ input_adapters:
   - import: ./src/input_adapters/jensenlab/tinx.py
     class: TINXImportanceFileAdapter
     kwargs:
-      data_source: jensenlab:tinx:2026-10-04
+      data_source: jensenlab:tinx:2026-10-22
 
   - import: ./src/input_adapters/pharos_arango/tcrd/pathway.py
     class: ProteinPathwayAdapter

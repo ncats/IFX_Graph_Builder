@@ -1,3 +1,5 @@
+import pytest
+
 from src.constants import DataSourceName
 from src.core.etl import ETL
 from src.input_adapters.manual.tdl_override import TDLOverrideAdapter
@@ -124,14 +126,14 @@ def test_etl_rejects_resume_when_curations_need_a_clean_baseline():
         raise AssertionError("Expected resume with curations to fail safely")
 
 
-def test_etl_resume_accepts_legacy_input_checkpoint_and_reruns_post_adapter():
+def test_etl_resume_accepts_legacy_input_checkpoint_and_skips_completed_post_adapter():
     events = []
 
     class ShouldBeSkipped(_OneProteinAdapter):
         def get_all(self):
             raise AssertionError("completed input adapter should be skipped")
 
-    class RerunPost(_OneProteinAdapter):
+    class CompletedPost(_OneProteinAdapter):
         def get_all(self):
             events.append("post")
             yield [Protein(id="IFXProtein:P1", name="recalculated")]
@@ -141,14 +143,64 @@ def test_etl_resume_accepts_legacy_input_checkpoint_and_reruns_post_adapter():
     class CheckpointOutput(_RecordingOutputAdapter):
         def get_completed_adapter_names(self, run_id):
             assert run_id == "resume-test"
-            return {input_adapter.get_name(), f"post:{RerunPost().get_name()}"}
+            return {input_adapter.get_name(), f"post:{CompletedPost().get_name()}"}
 
     etl = ETL(
         input_adapters=[input_adapter],
-        post_adapters=[RerunPost()],
+        post_adapters=[CompletedPost()],
         output_adapters=[CheckpointOutput()],
     )
 
     etl.do_etl(do_post_processing=False, resume=True, run_id="resume-test")
 
-    assert events == ["post"]
+    assert events == []
+
+
+def test_etl_resume_skips_completed_post_adapter():
+    events = []
+
+    class CompletedPost(_OneProteinAdapter):
+        def get_all(self):
+            raise AssertionError("completed post adapter should be skipped")
+
+    class RemainingPost(_OneProteinAdapter):
+        def get_all(self):
+            events.append("remaining_post")
+            yield [Protein(id="IFXProtein:P1", name="derived")]
+
+    input_adapter = _OneProteinAdapter()
+    completed_post = CompletedPost()
+
+    class CheckpointOutput(_RecordingOutputAdapter):
+        def get_completed_adapter_names(self, run_id):
+            return {
+                f"input:{input_adapter.get_name()}",
+                f"post:{completed_post.get_name()}",
+            }
+
+    etl = ETL(
+        input_adapters=[input_adapter],
+        post_adapters=[completed_post, RemainingPost()],
+        output_adapters=[CheckpointOutput()],
+    )
+
+    etl.do_etl(do_post_processing=False, resume=True, run_id="resume-post")
+
+    assert events == ["remaining_post"]
+
+
+def test_etl_resume_rejects_stale_post_checkpoint_when_primary_is_incomplete():
+    post_adapter = _OneProteinAdapter()
+
+    class CheckpointOutput(_RecordingOutputAdapter):
+        def get_completed_adapter_names(self, run_id):
+            return {f"post:{post_adapter.get_name()}"}
+
+    etl = ETL(
+        input_adapters=[_OneProteinAdapter()],
+        post_adapters=[post_adapter],
+        output_adapters=[CheckpointOutput()],
+    )
+
+    with pytest.raises(RuntimeError, match="primary adapters are incomplete"):
+        etl.do_etl(do_post_processing=False, resume=True, run_id="stale-post")

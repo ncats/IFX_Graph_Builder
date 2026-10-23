@@ -68,7 +68,7 @@ def collect_registry_references(
             loaded_files.remove(resolved)
 
     # These are the same sections whose Registry references Config resolves.
-    for section in ("resolvers", "input_adapters"):
+    for section in ("resolvers", "input_adapters", "post_adapters"):
         if section in config:
             visit(config[section], section)
     return tuple(dict.fromkeys(references))
@@ -176,6 +176,8 @@ def _unchecked_derived_roots(report: Any) -> tuple[SnapshotRef, ...]:
             if reference.kind != RegistryReferenceKind.DERIVED:
                 continue
             entry = entries.get(reference)
+            if entry is not None and getattr(entry.disposition, "value", None) == "historical":
+                continue
             dependencies = getattr(entry, "dependencies", ()) if entry else ()
             if not dependencies:
                 unchecked.add(root)
@@ -199,7 +201,9 @@ def _transitive_source_dependencies(
             sources.add(reference)
             continue
         entry = entries.get(reference)
-        if entry is not None:
+        if entry is not None and getattr(
+            getattr(entry, "disposition", None), "value", None
+        ) != "historical":
             pending.extend(getattr(entry, "dependencies", ()))
     return tuple(sorted(sources, key=lambda ref: ref.snapshot_id))
 
@@ -208,7 +212,7 @@ def print_report(report: Any, yaml_path: str | Path) -> None:
     """Print a dependency-first, operator-oriented audit report."""
     print(f"Registry freshness for {yaml_path}")
     if report is None:
-        print("No Registry references found in resolvers or input adapters.")
+        print("No Registry references found in resolvers, input adapters, or post adapters.")
         return
     roots = frozenset(
         getattr(report, "roots", tuple(entry.reference for entry in report.entries))
@@ -311,6 +315,14 @@ def print_report(report: Any, yaml_path: str | Path) -> None:
             lambda entry: (
                 entry.disposition is AuditDisposition.CURRENT
                 and not _caveats(entry)
+            ),
+            _print_current_entry,
+        ),
+        (
+            "Verified historical lineage",
+            lambda entry: (
+                getattr(entry.disposition, "value", None) == "historical"
+                and entry.reference.kind == RegistryReferenceKind.DERIVED
             ),
             _print_current_entry,
         ),

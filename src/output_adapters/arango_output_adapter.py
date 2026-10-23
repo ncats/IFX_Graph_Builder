@@ -4,9 +4,10 @@ import os
 import platform
 import socket
 import time
+from types import UnionType
 from datetime import datetime, date, timezone
 from enum import Enum
-from typing import Type, List, get_origin, get_args, Union
+from typing import Type, List, get_origin, get_args, get_type_hints, Union
 
 from arango.exceptions import DocumentInsertError, DocumentUpdateError
 from src.core.decorators import collect_facets, collect_indexed_fields, collect_search_fields
@@ -425,26 +426,43 @@ class ArangoOutputAdapter(OutputAdapter, ArangoAdapter):
     def create_indexes(self, cls: Type, collection):
         indexed_fields = collect_indexed_fields(cls)
         categories, numerics = collect_facets(cls)
+        type_hints = get_type_hints(cls)
+
+        def index_path(field: str) -> str:
+            if "[*]" in field:
+                return field
+            hint = type_hints.get(field)
+            if get_origin(hint) in (Union, UnionType):
+                members = [member for member in get_args(hint) if member is not type(None)]
+                if len(members) == 1:
+                    hint = members[0]
+            return f"{field}[*]" if get_origin(hint) is list else field
 
         existing_indexes = collection.indexes()
         existing_fields = {tuple(index['fields']) for index in existing_indexes}
 
-        # Create hash indexes for category fields and additional explicitly-indexed fields.
-        for field in sorted(indexed_fields | categories):
+        # Index scalar values directly and individual members of marked list fields.
+        for field in sorted({index_path(field) for field in indexed_fields | categories}):
             field_tuple = (field,)
             if field_tuple not in existing_fields:
-                print(f"Creating HASH index on: {field}")
-                if hasattr(collection, "add_hash_index"):
+                if "[*]" in field:
+                    print(f"Creating PERSISTENT array index on: {field}")
+                    collection.add_persistent_index(fields=[field], sparse=True)
+                elif hasattr(collection, "add_hash_index"):
+                    print(f"Creating HASH index on: {field}")
                     collection.add_hash_index(fields=[field], sparse=True)
                 else:
+                    print(f"Creating PERSISTENT index on: {field}")
                     collection.add_persistent_index(fields=[field], sparse=True)
+                existing_fields.add(field_tuple)
 
         # Create persistent indexes for numeric fields
-        for field in sorted(numerics):
+        for field in sorted({index_path(field) for field in numerics}):
             field_tuple = (field,)
             if field_tuple not in existing_fields:
                 print(f"Creating PERSISTENT index on: {field}")
                 collection.add_persistent_index(fields=[field], sparse=True)
+                existing_fields.add(field_tuple)
 
 
     @staticmethod

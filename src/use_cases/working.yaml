@@ -1,100 +1,63 @@
+# TARGETS 2.5.1 baseline: legacy ID-file consumers for comparison with the new contract.
 source_credentials: &source_credentials ./src/use_cases/secrets/ifxdev_arangodb.yaml
-database_name: &database_name metabolite_harmonization
+database_name: &database_name targets_251_legacy_id_files
+targets_release: &targets_release {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.5.1}
 
 registry:
   credentials: ./src/use_cases/secrets/aws_ifx_registry.yaml
 
+resolvers:
+  - label: tg_genes
+    import: ./src/id_resolvers/target_graph_resolver.py
+    class: TargetGraphGeneResolver
+    kwargs:
+      data_source: *targets_release
+      types: [Gene]
+      no_match_behavior: Skip
+  - label: tg_transcripts
+    import: ./src/id_resolvers/target_graph_resolver.py
+    class: TargetGraphTranscriptResolver
+    kwargs:
+      data_source: *targets_release
+      types: [Transcript]
+      no_match_behavior: Skip
+  - label: tg_proteins
+    import: ./src/id_resolvers/target_graph_resolver.py
+    class: TargetGraphProteinResolver
+    kwargs:
+      data_source: *targets_release
+      types: [Protein]
+      no_match_behavior: Skip
+
 input_adapters:
-  - import: ./src/input_adapters/metabolite_harmonization/hmdb.py
-    class: HmdbMetaboliteEquivalenceAdapter
+  - import: ./src/input_adapters/target_graph/gene_node.py
+    class: GeneNodeAdapter
     kwargs:
-      data_source: hmdb:metabolites_xml:5.0
-
-  - import: ./src/input_adapters/metabolite_harmonization/hmdb_classes_ontology.py
-    class: HmdbMetaboliteClassificationAdapter
+      data_source: *targets_release
+  - import: ./src/input_adapters/target_graph/transcript_node.py
+    class: TranscriptNodeAdapter
     kwargs:
-      data_source: hmdb:metabolites_xml:5.0
-
-  - import: ./src/input_adapters/metabolite_harmonization/hmdb_classes_ontology.py
-    class: HmdbOntologyAdapter
+      data_source: *targets_release
+  - import: ./src/input_adapters/target_graph/protein_nodes_and_edges.py
+    class: ProteinNodeAdapter
     kwargs:
-      data_source: hmdb:metabolites_xml:5.0
-
-  - import: ./src/input_adapters/metabolite_harmonization/hmdb_pathways.py
-    class: HmdbMetabolitePathwayContextAdapter
+      data_source: *targets_release
+  - import: ./src/input_adapters/target_graph/gene_transcript_edge.py
+    class: GeneTranscriptEdgeAdapter
     kwargs:
-      data_source: hmdb:metabolites_xml:5.0
-
-  - import: ./src/input_adapters/metabolite_harmonization/hmdb_proteins.py
-    class: HmdbProteinContextAdapter
+      data_source: *targets_release
+  - import: ./src/input_adapters/target_graph/protein_nodes_and_edges.py
+    class: TranscriptProteinEdgeAdapter
     kwargs:
-      data_source: hmdb:proteins_xml:5.0
-
-  - import: ./src/input_adapters/metabolite_harmonization/reactome_pathways.py
-    class: ReactomePathwayContextAdapter
+      data_source: *targets_release
+  - import: ./src/input_adapters/target_graph/protein_nodes_and_edges.py
+    class: GeneProteinEdgeAdapter
     kwargs:
-      data_source: reactome:pathways:97-bundle1
-
-  - import: ./src/input_adapters/metabolite_harmonization/wikipathways.py
-    class: WikiPathwaysMetaboliteEquivalenceAdapter
+      data_source: *targets_release
+  - import: ./src/input_adapters/target_graph/protein_nodes_and_edges.py
+    class: IsoformProteinEdgeAdapter
     kwargs:
-      data_source: wikipathways:rdf_wp:2026-06-10
-
-  - import: ./src/input_adapters/metabolite_harmonization/wikipathways.py
-    class: WikiPathwaysPathwayContextAdapter
-    kwargs:
-      data_source: wikipathways:rdf_wp:2026-06-10
-
-  - import: ./src/input_adapters/metabolite_harmonization/pfocr_pathways.py
-    class: PfocrPathwayContextAdapter
-    kwargs:
-      data_source: pfocr:human_pathways:2025-07-01
-
-  - import: ./src/input_adapters/metabolite_harmonization/lipidmaps.py
-    class: LipidMapsMetaboliteEquivalenceAdapter
-    kwargs:
-      data_source: lipidmaps:lmsd_sdf:2026-06-30
-
-  - import: ./src/input_adapters/metabolite_harmonization/lipidmaps_classes.py
-    class: LipidMapsMetaboliteClassificationAdapter
-    kwargs:
-      data_source: lipidmaps:lmsd_sdf:2026-06-30
-
-  - import: ./src/input_adapters/metabolite_harmonization/refmet.py
-    class: RefMetMetaboliteEquivalenceAdapter
-    kwargs:
-      data_source: refmet:metabolites_csv:sha256-f40f14165725
-
-  - import: ./src/input_adapters/metabolite_harmonization/chemprops.py
-    class: HmdbMetaboliteChemPropsAdapter
-    kwargs:
-      data_source: hmdb:structures_sdf:5.0
-      metabolites_data_source: hmdb:metabolites_xml:5.0
-
-  - import: ./src/input_adapters/metabolite_harmonization/chemprops.py
-    class: ChebiMetaboliteChemPropsAdapter
-    kwargs:
-      data_source: chebi:three_star_sdf:2026-05-01
-
-  - import: ./src/input_adapters/metabolite_harmonization/chemprops.py
-    class: LipidMapsMetaboliteChemPropsAdapter
-    kwargs:
-      data_source: lipidmaps:lmsd_sdf:2026-06-30
-
-  - import: ./src/input_adapters/metabolite_harmonization/chemprops.py
-    class: PubchemMetaboliteChemPropsAdapter
-    kwargs:
-      data_source: {kind: derived_snapshot, snapshot_id: pubchem:cid_molecular_info:deps-31c7bedefb74}
-
-  - import: ./src/input_adapters/chebi/chebi_obo_adapter.py
-    class: ChebiFullOboAdapter
-    kwargs:
-      data_source: chebi:ontology_full:252
-
-  - import: ./src/input_adapters/metabolite_harmonization/chebi_bridge.py
-    class: ChebiMetaboliteIdentifierBridgeAdapter
-    kwargs:
-      data_source: chebi:ontology_full:252
+      data_source: *targets_release
 
 output_adapters:
   - import: ./src/output_adapters/arango_output_adapter.py

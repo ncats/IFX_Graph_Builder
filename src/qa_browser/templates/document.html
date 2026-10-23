@@ -111,6 +111,10 @@
 {% block content %}
 {% if doc %}
 
+{% if resolved_from %}
+<div class="card">Opened {{ doc.id or doc._key }} from {{ resolved_from }}.</div>
+{% endif %}
+
 {# ── Header ──────────────────────────────────────────────── #}
 <div class="doc-header">
     <h1>{{ doc.get("name", doc.get("id", doc_key)) }}</h1>

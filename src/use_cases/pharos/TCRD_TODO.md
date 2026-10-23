@@ -74,7 +74,7 @@ These tables are populated directly from ontology source files during the TCRD b
 | Source Concept | Source Files | TCRD Tables |
 |---------|------------------------|-------------|
 | **MONDO ontology** | [x] `input_files/auto/mondo/mondo.json` | [x] `mondo`<br>[x] `mondo_xref`<br>[x] `mondo_parent`<br>[x] `ancestry_mondo` *(post-processing from `mondo_parent`)* |
-| **Disease Ontology** | [x] `input_files/auto/disease_ontology/doid.json` | [x] `do`<br>[x] `do_parent`<br>[x] `ancestry_do` *(post-processing from `do_parent`)* |
+| **Disease Ontology** | [x] `input_files/auto/disease_ontology/doid.obo` | [x] `do`<br>[x] `do_parent`<br>[x] `ancestry_do` *(post-processing from `do_parent`)* |
 
 ---
 
