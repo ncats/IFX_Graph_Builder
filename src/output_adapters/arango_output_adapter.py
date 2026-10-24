@@ -7,7 +7,7 @@ import time
 from types import UnionType
 from datetime import datetime, date, timezone
 from enum import Enum
-from typing import Type, List, get_origin, get_args, get_type_hints, Union
+from typing import Type, List, get_origin, get_args, Union
 
 from arango.exceptions import DocumentInsertError, DocumentUpdateError
 from src.core.decorators import collect_facets, collect_indexed_fields, collect_search_fields
@@ -426,12 +426,14 @@ class ArangoOutputAdapter(OutputAdapter, ArangoAdapter):
     def create_indexes(self, cls: Type, collection):
         indexed_fields = collect_indexed_fields(cls)
         categories, numerics = collect_facets(cls)
-        type_hints = get_type_hints(cls)
+        # Dataclass fields retain the declared types without evaluating unrelated
+        # forward references (for example ProteinPathwayEdge.start_node).
+        field_types = {field.name: field.type for field in dataclasses.fields(cls)}
 
         def index_path(field: str) -> str:
             if "[*]" in field:
                 return field
-            hint = type_hints.get(field)
+            hint = field_types.get(field)
             if get_origin(hint) in (Union, UnionType):
                 members = [member for member in get_args(hint) if member is not type(None)]
                 if len(members) == 1:

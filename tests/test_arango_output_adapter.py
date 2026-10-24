@@ -15,6 +15,7 @@ from src.core.curations import (
 )
 from src.core.decorators import facets, indexed
 from src.models.protein import Protein
+from src.models.pathway import ProteinPathwayEdge
 from src.models.test_models import TestEdge, TestNode
 from src.interfaces.resolver_metadata import resolver_fingerprints_by_type
 from src.output_adapters.arango_output_adapter import ArangoOutputAdapter
@@ -956,6 +957,16 @@ def test_node_xrefs_use_array_member_index():
     assert ("persistent", {"fields": ["xref[*]"], "sparse": True}) in collection.created
     assert ("persistent", {"fields": ["sources[*]"], "sparse": True}) in collection.created
     assert not any(kind == "hash" and call["fields"] == ["xref[*]"] for kind, call in collection.created)
+
+
+def test_edge_index_creation_ignores_unresolved_endpoint_annotation():
+    class Collection:
+        def indexes(self):
+            return []
+
+    ArangoOutputAdapter.__new__(ArangoOutputAdapter).create_indexes(
+        ProteinPathwayEdge, Collection()
+    )
 
 
 def test_marked_list_fields_expand_once_and_existing_array_index_is_reused():
