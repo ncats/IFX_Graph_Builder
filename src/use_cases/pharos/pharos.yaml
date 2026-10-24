@@ -297,9 +297,9 @@ input_adapters:
     kwargs:
       protein_data_source: *targets_release
       glygen_data_source: glygen:proteins:0a30c984d41c68500790b376e3644145
-      dark_kinome_data_source: dark_kinome:kinases:capture_20261023T175834Z
-      resolute_data_source: resolute:genes:capture_20261023T175838Z
-      linkedomics_data_source: linkedomics:genes:capture_20261023T175839Z
+      dark_kinome_data_source: dark_kinome:kinases:capture_20261023T174847Z
+      resolute_data_source: resolute:genes:capture_20261023T174926Z
+      linkedomics_data_source: linkedomics:genes:capture_20261023T174941Z
       tiga_data_source: tiga:gene_trait:20260720
       canonical_only: true
 
