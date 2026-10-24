@@ -17,17 +17,16 @@ resolvers:
         - Disease
 
   - label: tcrd_targets
-    import: ./src/id_resolvers/target_graph_resolver.py
-    class: TCRDTargetResolver
+    import: ./src/id_resolvers/target_consumer_pharos_resolver.py
+    class: TargetConsumerPharosCanonicalResolver
     kwargs:
       data_source: *targets_release
-      collapse_to_canonical: true
-      canonical_type: Protein
       types:
         - Protein
         - Gene
         - Transcript
       no_match_behavior: Skip
+      multi_match_behavior: All
 
   - label: hcop_ortholog_genes
     import: ./src/id_resolvers/hcop_ortholog_gene_resolver.py

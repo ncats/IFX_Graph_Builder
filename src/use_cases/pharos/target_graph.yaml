@@ -17,31 +17,34 @@ resolvers:
         - Disease
 
   - label: tg_genes
-    import: ./src/id_resolvers/target_graph_resolver.py
-    class: TargetGraphGeneResolver
+    import: ./src/id_resolvers/target_consumer_resolver.py
+    class: TargetConsumerGeneResolver
     kwargs:
       data_source: *targets_release
       types:
         - Gene
       no_match_behavior: Skip
+      multi_match_behavior: Error
 
   - label: tg_transcripts
-    import: ./src/id_resolvers/target_graph_resolver.py
-    class: TargetGraphTranscriptResolver
+    import: ./src/id_resolvers/target_consumer_resolver.py
+    class: TargetConsumerTranscriptResolver
     kwargs:
       data_source: *targets_release
       types:
         - Transcript
       no_match_behavior: Skip
+      multi_match_behavior: Error
 
   - label: tg_proteins
-    import: ./src/id_resolvers/target_graph_resolver.py
-    class: TargetGraphProteinResolver
+    import: ./src/id_resolvers/target_consumer_resolver.py
+    class: TargetConsumerProteinResolver
     kwargs:
       data_source: *targets_release
       types:
         - Protein
       no_match_behavior: Skip
+      multi_match_behavior: Error
 
   - label: hcop_ortholog_genes
     import: ./src/id_resolvers/hcop_ortholog_gene_resolver.py

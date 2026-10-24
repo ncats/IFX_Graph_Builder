@@ -362,6 +362,26 @@ def test_tcrd_output_adapter_rejects_graph_resolver_with_broader_type_scope():
         adapter._validate_source_graph_resolver_metadata()
 
 
+def test_tcrd_resolver_validation_precedes_mysql_recreation(monkeypatch):
+    adapter = TCRDOutputAdapter.__new__(TCRDOutputAdapter)
+    calls = []
+
+    def reject_source_graph():
+        calls.append("validate")
+        raise RuntimeError("source graph resolver mismatch")
+
+    def recreate_mysql(self, truncate_tables=None):
+        calls.append("recreate")
+        return True
+
+    adapter._validate_source_graph_resolver_metadata = reject_source_graph
+    monkeypatch.setattr(MySQLOutputAdapter, "create_or_truncate_datastore", recreate_mysql)
+
+    with pytest.raises(RuntimeError, match="source graph resolver mismatch"):
+        adapter.create_or_truncate_datastore()
+    assert calls == ["validate"]
+
+
 def test_tcrd_output_adapter_builds_transitive_closure_with_self_rows():
     closure = TCRDOutputAdapter._build_transitive_closure(
         node_ids=["A", "B", "C", "D"],

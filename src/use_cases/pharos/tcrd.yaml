@@ -24,17 +24,16 @@ resolvers:
         - Disease
 
   - label: tcrd_targets
-    import: ./src/id_resolvers/target_graph_resolver.py
-    class: TCRDTargetResolver
+    import: ./src/id_resolvers/target_consumer_pharos_resolver.py
+    class: TargetConsumerPharosCanonicalResolver
     kwargs:
       data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.5.2}
-      collapse_to_canonical: true
-      canonical_type: Protein
       types:
         - Protein
         - Gene
         - Transcript
       no_match_behavior: Skip
+      multi_match_behavior: All
 
 input_adapters:
   - import: ./src/input_adapters/pharos_source_tcrd/ontology_tables.py

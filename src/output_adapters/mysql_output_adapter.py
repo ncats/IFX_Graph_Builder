@@ -618,9 +618,9 @@ class TCRDOutputAdapter(MySQLOutputAdapter):
             session.close()
 
     def create_or_truncate_datastore(self, truncate_tables: bool = None) -> bool:
+        self._validate_source_graph_resolver_metadata()
         super().create_or_truncate_datastore(truncate_tables=truncate_tables)
         self.output_converter.sql_base.metadata.create_all(self.get_engine())
-        self._validate_source_graph_resolver_metadata()
         session = self.get_session()
         try:
             self.output_converter.preload_id_mappings(session)
