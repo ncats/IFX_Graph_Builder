@@ -12,6 +12,7 @@ import smtplib
 import tempfile
 import time
 import uuid
+from dataclasses import asdict
 from email import encoders
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
@@ -19,11 +20,13 @@ from email.mime.text import MIMEText
 from pathlib import Path
 from typing import List
 
-from fastapi import APIRouter, File, Form, Request, UploadFile
+import pandas as pd
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from sqlalchemy import text
 
 from src.core.validator import ValidationError
+from src.input_adapters.excel_sheet_adapter import ExcelsheetParser
 from src.input_adapters.pounce_sheets.mapping_coverage import (
     check_gene_coverage,
     check_metabolite_coverage,
@@ -31,10 +34,16 @@ from src.input_adapters.pounce_sheets.mapping_coverage import (
 )
 from src.input_adapters.pounce_sheets.pounce_input_adapter import PounceInputAdapter
 from src.input_adapters.pounce_sheets.pounce_parser import (
+    PounceParser,
     _EXPERIMENT_RECOGNIZED_SHEETS,
     _PROJECT_REQUIRED_SHEETS,
     _STATS_RECOGNIZED_SHEETS,
 )
+from src.input_adapters.pounce_sheets.validator_loader import load_validators
+from src.input_adapters.pounce_sheets.workbook_format import (
+    UnsupportedPounceFormat, normalize_pounce_workbook, restore_pounce_issue,
+)
+from src.qa_browser.pounce_api_contract import PounceValidationRequest
 
 router = APIRouter(prefix="/pounce")
 
@@ -514,6 +523,62 @@ def _assign_content_issue_source_files(all_issues: list[ValidationError], projec
             issue.source_file = stats_paths[0]
 
 
+def _restore_content_issue_sheets(issues: list[ValidationError], parsed_data) -> None:
+    for issue in issues:
+        if issue.source_file and issue.sheet:
+            original = parsed_data.original_sheets.get(issue.source_file, {})
+            version = parsed_data.workbook_versions.get(issue.source_file, 2)
+            restore_pounce_issue(issue, original, version)
+
+
+def _file_version_rows(parsed_data, project_path: str, exp_paths: list[str], stats_paths: list[str]):
+    if parsed_data is None:
+        return []
+    rows = []
+    for role, paths in (("Project", [project_path]), ("Experiment", exp_paths),
+                        ("Stats Results", stats_paths)):
+        for path in paths:
+            version = parsed_data.workbook_versions.get(path)
+            if version is not None:
+                rows.append((role, os.path.basename(path), f"v{version}"))
+    return rows
+
+
+def _validate_parsed_submission(parsed_data, structural_issues, project_path, exp_paths, stats_paths):
+    """Apply the same content checks and issue presentation to either input transport."""
+    content_issues = []
+    for validator in load_validators(_VALIDATORS_CONFIG):
+        content_issues.extend(validator.validate(parsed_data))
+    _assign_content_issue_source_files(content_issues, project_path, exp_paths, stats_paths)
+    _restore_content_issue_sheets(content_issues, parsed_data)
+    issues = _collapse_dependent_mapping_issues(structural_issues + content_issues)
+    grouped = _group_issues(
+        issues, os.path.basename(project_path),
+        [os.path.basename(path) for path in exp_paths],
+        [os.path.basename(path) for path in stats_paths],
+    )
+    return issues, grouped
+
+
+def _sheet_workbook_loader(workbooks):
+    """Adapt caller-supplied sheet tables to the existing workbook parser."""
+    by_source_id = {workbook.source_id: workbook for workbook in workbooks}
+
+    def load(source_id, role):
+        workbook = by_source_id[source_id]
+        sheets = {
+            sheet.name: pd.DataFrame(
+                [["" if value is None else value for value in row] for row in sheet.rows],
+                columns=sheet.columns,
+            )
+            for sheet in workbook.sheets
+        }
+        parser = ExcelsheetParser.from_sheets(source_id, sheets)
+        return normalize_pounce_workbook(parser, role)
+
+    return load
+
+
 def _collapse_dependent_mapping_issues(all_issues: list[ValidationError]) -> list[ValidationError]:
     """Suppress downstream analyte-ID noise when the root map-sheet key is broken.
 
@@ -682,6 +747,50 @@ def _compute_summary(
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
+@router.post("/api/validate")
+def validate_sheet_tables(submission: PounceValidationRequest):
+    """Validate decoded v2/v3 sheet tables without creating an upload session."""
+    project_id = submission.project.source_id
+    exp_ids = [workbook.source_id for workbook in submission.experiments]
+    stats_ids = [workbook.source_id for workbook in submission.stats_results]
+    loader = _sheet_workbook_loader(
+        [submission.project, *submission.experiments, *submission.stats_results]
+    )
+    try:
+        parsed_data, structural_issues = PounceParser().parse_all(
+            project_id, exp_ids, stats_ids, workbook_loader=loader
+        )
+    except (UnsupportedPounceFormat, KeyError, ValueError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    issues, _ = _validate_parsed_submission(
+        parsed_data, structural_issues, project_id, exp_ids, stats_ids
+    )
+    coverage = _compute_coverage(parsed_data)
+    return {
+        "schema_version": 1,
+        "files": [
+            {"role": role, "source_id": source_id,
+             "template_version": parsed_data.workbook_versions[source_id]}
+            for role, source_ids in (
+                ("project", [project_id]),
+                ("experiment", exp_ids),
+                ("stats_results", stats_ids),
+            ) for source_id in source_ids
+        ],
+        "error_count": sum(issue.severity == "error" for issue in issues),
+        "warning_count": sum(issue.severity == "warning" for issue in issues),
+        "issues": [
+            {**{key: value for key, value in asdict(issue).items() if key != "source_file"},
+             "source_id": issue.source_file}
+            for issue in issues
+        ],
+        "coverage": [
+            {**asdict(item), "mapped_pct": item.mapped_pct}
+            for item in coverage
+        ],
+    }
+
 @router.get("/validate", response_class=HTMLResponse)
 async def submission_home(request: Request):
     return _templates.TemplateResponse(request, "pounce_submission_home.html", {"request": request})
@@ -759,17 +868,8 @@ async def run_validation(
         parsed_data       = adapter.get_validation_data()
         structural_issues = adapter.get_structural_issues()
 
-        content_issues = []
-        for v in adapter.get_validators():
-            content_issues.extend(v.validate(parsed_data))
-        _assign_content_issue_source_files(content_issues, project_path, exp_paths, stats_paths)
-
-        all_issues = _collapse_dependent_mapping_issues(structural_issues + content_issues)
-        grouped    = _group_issues(
-            all_issues,
-            os.path.basename(project_path),
-            [os.path.basename(p) for p in exp_paths],
-            [os.path.basename(p) for p in stats_paths],
+        all_issues, grouped = _validate_parsed_submission(
+            parsed_data, structural_issues, project_path, exp_paths, stats_paths
         )
 
         # Create session so files survive until the submitter clicks Send.
@@ -827,6 +927,7 @@ async def run_validation(
         "protein_resolver_missing": protein_resolver_missing,
         "session_id":             session_id,
         "session_filenames":      session_filenames,
+        "file_versions":          _file_version_rows(parsed_data, project_path, exp_paths, stats_paths) if parsed_data else [],
         "smtp_configured":        bool(_smtp_config),
     })
 
@@ -940,17 +1041,8 @@ async def revalidate(
         parsed_data       = adapter.get_validation_data()
         structural_issues = adapter.get_structural_issues()
 
-        content_issues = []
-        for v in adapter.get_validators():
-            content_issues.extend(v.validate(parsed_data))
-        _assign_content_issue_source_files(content_issues, project_path, exp_paths, stats_paths)
-
-        all_issues = _collapse_dependent_mapping_issues(structural_issues + content_issues)
-        grouped    = _group_issues(
-            all_issues,
-            os.path.basename(project_path),
-            [os.path.basename(p) for p in exp_paths],
-            [os.path.basename(p) for p in stats_paths],
+        all_issues, grouped = _validate_parsed_submission(
+            parsed_data, structural_issues, project_path, exp_paths, stats_paths
         )
 
         new_sid, _ = _build_session(
@@ -1014,6 +1106,7 @@ async def revalidate(
         "protein_resolver_missing": protein_resolver_missing,
         "session_id":             new_sid,
         "session_filenames":      session_filenames,
+        "file_versions":          _file_version_rows(parsed_data, project_path, exp_paths, stats_paths) if parsed_data else [],
         "smtp_configured":        bool(_smtp_config),
     })
 

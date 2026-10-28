@@ -230,16 +230,14 @@ input_adapters:
   - import: ./src/input_adapters/chembl/drug_node.py
     class: DrugNodeAdapter
     kwargs:
-      data_source: {kind: external_dataset_version, snapshot_id: chembl:activity_database:chembl37}
+      data_source: {kind: source_snapshot, snapshot_id: chembl:activity_exports:chembl37-export1}
       pchembl_cutoff: *pchembl_cutoff
-    credentials: ./src/use_cases/secrets/chembl_credentials.yaml
 
   - import: ./src/input_adapters/chembl/drug_node.py
     class: ProteinDrugEdgeAdapter
     kwargs:
-      data_source: {kind: external_dataset_version, snapshot_id: chembl:activity_database:chembl37}
+      data_source: {kind: source_snapshot, snapshot_id: chembl:activity_exports:chembl37-export1}
       pchembl_cutoff: *pchembl_cutoff
-    credentials: ./src/use_cases/secrets/chembl_credentials.yaml
 
   - import: ./src/input_adapters/drug_central/drug_indication.py
     class: DrugCentralIndicationAdapter

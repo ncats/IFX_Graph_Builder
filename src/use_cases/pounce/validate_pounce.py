@@ -7,6 +7,7 @@ from src.input_adapters.pounce_sheets.mapping_coverage import (
 from src.input_adapters.pounce_sheets.pounce_parser import (
     _PROJECT_REQUIRED_SHEETS, _EXPERIMENT_RECOGNIZED_SHEETS, _STATS_RECOGNIZED_SHEETS,
 )
+from src.input_adapters.pounce_sheets.workbook_format import restore_pounce_issue
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -72,6 +73,13 @@ for chosen in pounce_configs:
     for validator in adapter.get_validators():
         content_issues.extend(validator.validate(parsed_data))
     _assign_content_issue_source_files(content_issues, project_file, experiment_files, stats_files)
+    for issue in content_issues:
+        if issue.source_file and issue.sheet:
+            restore_pounce_issue(
+                issue,
+                parsed_data.original_sheets.get(issue.source_file, {}),
+                parsed_data.workbook_versions.get(issue.source_file, 2),
+            )
 
     all_issues = structural_issues + content_issues
     errors = [e for e in all_issues if e.severity == "error"]
@@ -123,6 +131,9 @@ for chosen in pounce_configs:
         print("\nValidation passed — no errors or warnings.")
 
     print(f"\nSummary:")
+    print("  Workbook formats:")
+    for path, version in parsed_data.workbook_versions.items():
+        print(f"    {os.path.basename(path)}: v{version}")
     print(f"  Project: {parsed_data.project.project_name if parsed_data.project else 'N/A'}")
     print(f"  Biosamples: {len(parsed_data.biosamples)}")
     print(f"  Biospecimens: {len(parsed_data.biospecimens)}")

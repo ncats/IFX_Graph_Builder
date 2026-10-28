@@ -1,4 +1,5 @@
 from typing import List, Dict
+import pytest
 
 from src.interfaces.id_resolver import IdResolver, IdMatch, NoMatchBehavior, MultiMatchBehavior
 from src.models.gene import Gene, GeneticLocation
@@ -35,6 +36,21 @@ def test_simple_merge():
 
     assert len(merged_map[IdResolver.MatchKeys.unmatched]) == 1
     assert merged_map[IdResolver.MatchKeys.unmatched]['2'].id == '2'
+
+
+def test_relationship_endpoint_multi_match_error_does_not_select_first():
+    resolver = TempResolver(types=['Node'], multi_match_behavior=MultiMatchBehavior.Error)
+    entries = [Node(id='source')]
+    matches = {
+        'source': [
+            IdMatch('source', 'Target:one'),
+            IdMatch('source', 'Target:two'),
+        ]
+    }
+    entity_map = resolver.get_merged_map(entries, matches)
+
+    with pytest.raises(ValueError, match="resolves to multiple targets"):
+        resolver.parse_entity_map(entity_map)
 
 
 def test_repeated_ids_parse_xrefs_once(monkeypatch):

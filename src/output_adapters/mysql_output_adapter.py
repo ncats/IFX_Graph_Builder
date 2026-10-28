@@ -610,6 +610,7 @@ class TCRDOutputAdapter(MySQLOutputAdapter):
 
     def do_pre_processing(self) -> None:
         self._validate_source_graph_resolver_metadata()
+        self._validate_disease_identity_schema()
         session = self.get_session()
         try:
             self.output_converter.preload_id_mappings(session)
@@ -621,6 +622,7 @@ class TCRDOutputAdapter(MySQLOutputAdapter):
         self._validate_source_graph_resolver_metadata()
         super().create_or_truncate_datastore(truncate_tables=truncate_tables)
         self.output_converter.sql_base.metadata.create_all(self.get_engine())
+        self._validate_disease_identity_schema()
         session = self.get_session()
         try:
             self.output_converter.preload_id_mappings(session)
@@ -628,6 +630,19 @@ class TCRDOutputAdapter(MySQLOutputAdapter):
         finally:
             session.close()
         return True
+
+    def _validate_disease_identity_schema(self) -> None:
+        inspector = sqlalchemy_inspect(self.get_engine())
+        columns = {column["name"]: column for column in inspector.get_columns("ncats_disease")}
+        unique_keys = [constraint.get("column_names") or [] for constraint in inspector.get_unique_constraints("ncats_disease")]
+        unique_keys.extend(index.get("column_names") or [] for index in inspector.get_indexes("ncats_disease") if index.get("unique"))
+        if ("ifx_id" not in columns or not columns["ifx_id"].get("nullable")
+                or ["ifx_id"] not in unique_keys):
+            raise RuntimeError(
+                "ncats_disease requires a nullable, unique ifx_id column for DISEASES conversion. "
+                "Create a fresh Pharos database or apply a reviewed schema migration before conversion; "
+                "a partially converted IFXDisease build also requires a fresh conversion or verified ID backfill."
+            )
 
     def _validate_source_graph_resolver_metadata(self) -> None:
         if self.source_graph_credentials is None or not self.source_graph_database:
@@ -712,6 +727,16 @@ class TCRDOutputAdapter(MySQLOutputAdapter):
             NcatsDisease.mondo_description,
             NcatsDisease.mondoid,
         ).all()
+        mondoid_by_sql_id = {row.id: row.mondoid for row in existing_rows}
+        converter._next_ncats_disease_id = max(mondoid_by_sql_id, default=0) + 1
+        for sql_id, ifx_id in session.query(NcatsDisease.id, NcatsDisease.ifx_id).filter(
+            NcatsDisease.ifx_id.isnot(None)
+        ).all():
+            if ifx_id:
+                existing_id = ncats_mapping.get(ifx_id)
+                if existing_id is not None and existing_id != sql_id:
+                    raise ValueError(f"Conflicting persisted IFXDisease mapping for {ifx_id}")
+                ncats_mapping[ifx_id] = sql_id
 
         signature_to_id = {}
         ambiguous_signatures = set()
@@ -761,10 +786,25 @@ class TCRDOutputAdapter(MySQLOutputAdapter):
                 row.get("mondo_description"),
             )
             existing_id = signature_to_id.get(signature)
+            if disease_id.startswith("IFXDisease:"):
+                if existing_id is not None or signature in ambiguous_signatures:
+                    raise RuntimeError(
+                        f"Existing ncats_disease rows may include {disease_id} without a persisted ifx_id. "
+                        "Resume requires a fresh conversion or independently verified exact ID backfill."
+                    )
+                continue
             if existing_id is None:
                 continue
             ncats_mapping[disease_id] = existing_id
             mapped += 1
+
+        # A resumed build may skip Disease nodes and convert only their edges.
+        # Restore the MONDO alias from the persisted ncats_disease row in that case.
+        converter._disease_mondoid_by_id.update({
+            disease_id: mondoid_by_sql_id[sql_id]
+            for disease_id, sql_id in ncats_mapping.items()
+            if disease_id.startswith("IFXDisease:") and sql_id in mondoid_by_sql_id
+        })
 
         if mapped:
             print(f"Preloaded {mapped} graph-backed ncats_disease ids for resume safety")

@@ -18,10 +18,19 @@ class Disease(Node):
     synonyms: Optional[List[str]] = None
     comments: Optional[List[str]] = None
     rare_disease: Optional[bool] = None
+    disease_harmonizer_payload: Optional[dict[str, str]] = None
 
 
 @dataclass
 class DiseaseParentEdge(Relationship):
+    start_node: Disease = None
+    end_node: Disease = None
+    source: str = None
+    hierarchy_payload: Optional[dict[str, str]] = None
+
+
+@dataclass
+class MondoDiseaseParentEdge(Relationship):
     start_node: Disease = None
     end_node: Disease = None
     source: str = None
@@ -38,6 +47,7 @@ class GeneDiseaseEdge(Relationship):
     start_node: Gene = None
     end_node: Disease = None
     details: List["DiseaseAssociationDetail"] = field(default_factory=list)
+    disease_harmonizer_support: Optional[dict[str, str]] = None
 
 
 @dataclass
@@ -55,6 +65,17 @@ class DiseaseAssociationDetail:
     drug_name: Optional[str] = None
     snomed_id: Optional[str] = None
     doid: Optional[str] = None
+    predicate: Optional[str] = None
+    negated: Optional[bool] = None
+    source_subject_id: Optional[str] = None
+    subject_type: Optional[str] = None
+    source_protein_id: Optional[str] = None
+    disease_mapping_basis: Optional[str] = None
+    evidence_type: Optional[str] = None
+    evidence_label: Optional[str] = None
+    evidence_score: Optional[str] = None
+    publications_raw: Optional[str] = None
+    assertion_payload: Optional[dict[str, str]] = None
 
     def to_dict(self):
         return asdict(self)
@@ -69,6 +90,7 @@ class ProteinDiseaseEdge(Relationship):
     start_node: Protein = None
     end_node: Disease = None
     details: List[DiseaseAssociationDetail] = field(default_factory=list)
+    disease_harmonizer_support: Optional[dict[str, str]] = None
 
 
 @dataclass

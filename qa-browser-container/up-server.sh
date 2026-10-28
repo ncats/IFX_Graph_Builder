@@ -14,5 +14,8 @@ fi
 
 cd "${container_dir}"
 QA_BROWSER_RUNNER_INSTANCE_ID="${runner_instance_id}" \
-IFX_REGISTRY_SSH_KEY="${deploy_key}" \
-exec docker compose up -d --build "$@"
+exec ssh-agent sh -c '
+    ssh-add "$1" >/dev/null || exit 1
+    shift
+    exec "$@"
+' sh "${deploy_key}" docker compose up -d --build "$@"

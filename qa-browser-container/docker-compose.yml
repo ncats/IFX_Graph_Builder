@@ -4,7 +4,7 @@ services:
       context: ..
       dockerfile: qa-browser-container/Dockerfile
       ssh:
-        - default=${IFX_REGISTRY_SSH_KEY:-${HOME}/.ssh/id_ed25519}
+        - default
     container_name: qa_browser
     ports:
       - "8046:8050"

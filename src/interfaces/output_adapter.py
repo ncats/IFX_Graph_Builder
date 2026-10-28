@@ -47,6 +47,28 @@ class OutputAdapter(ABC):
     def reset_run_state(self, run_id: str) -> None:
         pass
 
+    def set_build_run_id(self, run_id: str) -> None:
+        pass
+
+    def acquire_run_lock(self, run_id: str, attempt_id: str) -> None:
+        pass
+
+    def release_run_lock(self, run_id: str, attempt_id: str) -> None:
+        pass
+
+    def begin_run_attempt(self, run_id: str, resume: bool, attempt_id: str) -> None:
+        pass
+
+    def finish_run_attempt(self, run_id: str, attempt_id: str, outcome: str, elapsed_seconds: float,
+                           error_message: str | None = None) -> None:
+        pass
+
+    def record_unmatched_ids(self, run_id: str, adapter_name: str, phase: str, issues: list[dict]) -> None:
+        pass
+
+    def finish_build_diagnostics(self, run_id: str) -> None:
+        pass
+
     def mark_adapter_running(self, run_id: str, adapter_name: str, adapter_position: int | None = None,
                              adapter_total: int | None = None) -> None:
         pass

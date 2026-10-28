@@ -998,3 +998,128 @@ def test_marked_list_fields_expand_once_and_existing_array_index_is_reused():
         ("hash", {"fields": ["label"], "sparse": True}),
         ("persistent", {"fields": ["scores[*]"], "sparse": True}),
     ]
+
+
+def test_unmatched_diagnostics_keep_raw_id_and_role(monkeypatch):
+    calls = []
+    adapter = ArangoOutputAdapter.__new__(ArangoOutputAdapter)
+    adapter._build_diagnostics_collection = lambda: None
+    adapter.get_db = lambda: SimpleNamespace(aql=SimpleNamespace(
+        execute=lambda query, **kwargs: calls.append((query, kwargs))
+    ))
+
+    adapter.record_unmatched_ids(
+        "pharos.yaml", "input:ExampleAdapter", "input",
+        [{"node_type": "Protein", "source_id": "UniProtKB:P12345", "endpoint_role": "start", "occurrences": 3}],
+    )
+
+    record = calls[0][1]["bind_vars"]["issues"][0]
+    assert record["source_id"] == "UniProtKB:P12345"
+    assert record["endpoint_role"] == "start"
+    assert record["occurrences"] == 3
+    assert record["adapter"] == "input:ExampleAdapter"
+    assert "OLD.occurrences + issue.occurrences" in calls[0][0]
+
+
+def test_cleanup_records_deleted_edge_only_after_successful_remove():
+    events = []
+    edge = {"_key": "edge-1", "_from": "Protein/missing", "_to": "Disease/missing"}
+
+    class Aql:
+        def __init__(self):
+            self.read_count = 0
+
+        def execute(self, query, **kwargs):
+            if "SORT e._key" in query:
+                self.read_count += 1
+                return [edge] if self.read_count == 1 else []
+            if "REMOVE key" in query:
+                events.append("remove")
+            return []
+
+    adapter = ArangoOutputAdapter.__new__(ArangoOutputAdapter)
+    adapter._build_run_id = "pharos.yaml"
+    adapter.get_db = lambda: SimpleNamespace(aql=Aql())
+    db = adapter.get_db()
+    adapter.get_db = lambda: db
+    adapter.get_graph = lambda: SimpleNamespace(edge_definitions=lambda: [{"edge_collection": "ProteinDiseaseEdge"}])
+    adapter._get_document_existence_map = lambda db, ids, check_batch_size: {value: False for value in ids}
+    adapter._record_dangling_edges = lambda run_id, collection, edges, status: events.append((status, edges))
+
+    adapter.clean_up_dangling_edges(batch_size=10)
+
+    assert events[0][0] == "observed"
+    assert events[0][1][0]["missing_from"] is True
+    assert events[0][1][0]["missing_to"] is True
+    assert events[1] == "remove"
+    assert events[2][0] == "deleted"
+
+
+def test_run_attempts_survive_adapter_checkpoint_updates():
+    documents = {}
+
+    class Store:
+        def get(self, key):
+            return documents.get(key)
+
+        def insert(self, doc, overwrite=False):
+            documents[doc["_key"]] = doc
+
+    adapter = ArangoOutputAdapter.__new__(ArangoOutputAdapter)
+    adapter.get_metadata_store = lambda truncate=False: Store()
+    adapter._build_diagnostics_collection = lambda: None
+    adapter.get_db = lambda: SimpleNamespace(aql=SimpleNamespace(execute=lambda *args, **kwargs: []))
+
+    adapter.begin_run_attempt("run.yaml", False, "first")
+    adapter.mark_adapter_running("run.yaml", "input:Example", 1, 1)
+    adapter.mark_adapter_completed("run.yaml", "input:Example", 10, 1, 1)
+    adapter.finish_run_attempt("run.yaml", "first", "failed", 5.0, "test failure")
+    adapter.begin_run_attempt("run.yaml", True, "second")
+    adapter.finish_run_attempt("run.yaml", "second", "completed", 7.0)
+
+    checkpoint = adapter._read_checkpoint_doc("run.yaml")
+    assert checkpoint["adapters"]["input:Example"]["status"] == "completed"
+    assert [(item["id"], item["status"]) for item in checkpoint["attempts"]] == [
+        ("first", "failed"), ("second", "completed"),
+    ]
+    assert sum(item["elapsed_seconds"] for item in checkpoint["attempts"]) == 12.0
+
+
+def test_resume_rejects_live_attempt_and_recovers_stopped_attempt(monkeypatch):
+    documents = {}
+    class Store:
+        def get(self, key):
+            return documents.get(key)
+        def insert(self, doc, overwrite=False):
+            documents[doc["_key"]] = doc
+
+    adapter = ArangoOutputAdapter.__new__(ArangoOutputAdapter)
+    adapter.get_metadata_store = lambda truncate=False: Store()
+    adapter.begin_run_attempt("run.yaml", False, "first")
+    with pytest.raises(RuntimeError, match="still owned by process"):
+        adapter.begin_run_attempt("run.yaml", True, "second")
+    monkeypatch.setattr("src.output_adapters.arango_output_adapter.os.kill", lambda pid, signal: (_ for _ in ()).throw(ProcessLookupError()))
+    adapter.begin_run_attempt("run.yaml", True, "second")
+    assert [item["status"] for item in adapter._read_checkpoint_doc("run.yaml")["attempts"]] == [
+        "interrupted", "running",
+    ]
+
+
+def test_observed_deleted_edge_is_reconciled_after_failed_status_write():
+    calls = []
+    issue = {"_key": "issue-1", "edge_collection": "ProteinEdge", "edge_key": "edge-1"}
+    class AQL:
+        def execute(self, query, **kwargs):
+            calls.append((query, kwargs))
+            return [issue] if "status == 'observed'" in query else []
+    class DB:
+        aql = AQL()
+        def has_collection(self, name):
+            return True
+        def collection(self, name):
+            return SimpleNamespace(get=lambda key: None)
+    adapter = ArangoOutputAdapter.__new__(ArangoOutputAdapter)
+    adapter.get_db = lambda: DB()
+    adapter._reconcile_observed_dangling_edges("run.yaml")
+    assert calls[-1][1]["bind_vars"]["keys"] == ["issue-1"]
+    assert "status: 'deleted'" in calls[-1][0]

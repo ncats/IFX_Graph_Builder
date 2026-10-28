@@ -245,6 +245,7 @@ def test_tcrd_output_adapter_preloads_mappings_in_pre_processing():
     fake_session = FakeSession()
     adapter.output_converter = fake_converter
     adapter.get_session = lambda: fake_session
+    adapter._validate_disease_identity_schema = lambda: None
 
     adapter.do_pre_processing()
 

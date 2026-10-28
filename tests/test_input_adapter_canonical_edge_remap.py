@@ -109,6 +109,35 @@ def test_remapped_expression_edges_keep_independent_copies_for_multiple_matches(
     assert edge.start_node.id == "G1"
 
 
+def test_unmatched_reporter_records_raw_nodes_and_edge_endpoints():
+    class _OnlyKnownResolver(IdResolver):
+        def resolve_internal(self, input_nodes):
+            return {
+                node.id: [IdMatch(node.id, node.id)]
+                for node in input_nodes if node.id.endswith("KNOWN")
+            }
+
+    adapter = _SingleBatchAdapter([
+        Gene(id="Gene:MISSING"), Gene(id="Gene:MISSING"),
+        GenePathwayEdge(start_node=Gene(id="Gene:MISSING"), end_node=Pathway(id="Pathway:MISSING")),
+        GenePathwayEdge(start_node=Gene(id="Gene:MISSING"), end_node=Pathway(id="Pathway:KNOWN")),
+    ])
+    issues = []
+    adapter.set_unmatched_reporter(issues.extend)
+    resolvers = {
+        node_type: _OnlyKnownResolver(types=[node_type], no_match_behavior=NoMatchBehavior.Skip)
+        for node_type in ("Gene", "Pathway")
+    }
+
+    list(adapter.get_resolved_and_provenanced_list(resolvers))
+
+    assert issues == [
+        {"node_type": "Gene", "source_id": "Gene:MISSING", "endpoint_role": "node", "occurrences": 2},
+        {"node_type": "Gene", "source_id": "Gene:MISSING", "endpoint_role": "start", "occurrences": 2},
+        {"node_type": "Pathway", "source_id": "Pathway:MISSING", "endpoint_role": "end", "occurrences": 1},
+    ]
+
+
 def test_input_adapter_remaps_gene_disease_edge_to_protein_edge():
     edge = GeneDiseaseEdge(start_node=Gene(id="G1"), end_node=Disease(id="D1"), details=[])
     adapter = _SingleBatchAdapter([edge])

@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}{{ db_name }} Build Diagnostics - QA Browser{% endblock %}
+{% block breadcrumb %}
+<span class="sep">/</span><a href="{{ root_path }}/qa-browser">QA Browser</a>
+<span class="sep">/</span><a href="{{ root_path }}/db/{{ db_name }}">{{ db_name }}</a>
+<span class="sep">/</span><span>Build Diagnostics</span>
+{% endblock %}
+{% block content %}
+<h1>{{ db_name }} Build Diagnostics</h1>
+<p><a href="{{ root_path }}/db/{{ db_name }}/build-status">Build Status</a></p>
+{% if diagnostics.available %}
+<div class="card">
+    <p><strong>Run:</strong> <span class="mono">{{ diagnostics.run_id }}</span>
+       · <span class="badge {% if diagnostics.status == 'complete' %}badge-success{% else %}badge-running{% endif %}">{{ diagnostics.status }}</span>
+       {% if diagnostics.updated_at %} · Updated {{ diagnostics.updated_at }}{% endif %}</p>
+    <div class="build-summary-row">
+        {% for item in diagnostics.summary %}
+        <div class="build-stat"><div class="value">{{ "{:,}".format(item.count) }}</div>
+            <div class="label">{{ item.kind.replace('_', ' ') }}{% if item.status %} · {{ item.status }}{% endif %}</div></div>
+        {% endfor %}
+    </div>
+    <form method="get">
+        <input type="hidden" name="run_id" value="{{ diagnostics.run_id }}">
+        <label>Kind <select name="kind"><option value="">All</option>
+            <option value="unmatched_id" {% if kind == 'unmatched_id' %}selected{% endif %}>Unmatched IDs</option>
+            <option value="dangling_edge" {% if kind == 'dangling_edge' %}selected{% endif %}>Deleted dangling edges</option>
+        </select></label>
+        <label>Adapter <input name="adapter" value="{{ adapter }}" placeholder="input:AdapterName"></label>
+        <label>Node type <input name="node_type" value="{{ node_type }}" placeholder="Protein"></label>
+        <label>Role <select name="endpoint_role"><option value="">All</option>
+            {% for role in ['node', 'start', 'end'] %}<option value="{{ role }}" {% if endpoint_role == role %}selected{% endif %}>{{ role }}</option>{% endfor %}
+        </select></label>
+        <button type="submit">Filter</button>
+    </form>
+    {% if diagnostics.rows %}
+    <table><thead><tr><th>Kind</th><th>Adapter / collection</th><th>Type / role</th><th>Raw ID / edge</th><th>Details</th></tr></thead><tbody>
+    {% for row in diagnostics.rows %}<tr>
+        <td>{{ row.kind.replace('_', ' ') }}</td>
+        {% if row.kind == 'unmatched_id' %}
+        <td>{{ row.adapter }}</td><td>{{ row.node_type }} · {{ row.endpoint_role }}</td>
+        <td class="mono">{{ row.source_id }}</td><td>{{ "{:,}".format(row.occurrences) }} occurrence{% if row.occurrences != 1 %}s{% endif %}</td>
+        {% else %}
+        <td>{{ row.edge_collection }}</td><td>Missing {% if row.missing_from %}start{% endif %}{% if row.missing_from and row.missing_to %} and {% endif %}{% if row.missing_to %}end{% endif %}</td>
+        <td class="mono">{{ row.edge_key }}</td><td class="mono">{{ row.from_id }} → {{ row.to_id }} · {{ row.status }}</td>
+        {% endif %}
+    </tr>{% endfor %}
+    </tbody></table>
+    {% if diagnostics.next_query %}<p><a href="{{ root_path }}/db/{{ db_name }}/build-diagnostics?{{ diagnostics.next_query }}">Next 100 →</a></p>{% endif %}
+    {% else %}<p>No diagnostics match these filters.</p>{% endif %}
+</div>
+{% else %}
+<div class="card"><p>No diagnostics were recorded for this run. Earlier builds did not retain unmatched IDs or deleted edges.</p></div>
+{% endif %}
+{% endblock %}

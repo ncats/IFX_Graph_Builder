@@ -851,9 +851,15 @@ class TestParseAll:
             return d, []
 
         monkeypatch.setattr(PounceParser, "parse_project", fake_parse_project)
+        from types import SimpleNamespace
         monkeypatch.setattr(
-            "src.input_adapters.pounce_sheets.pounce_parser.ExcelsheetParser",
-            lambda file_path: MagicMock(spec=ExcelsheetParser, sheet_dfs={})
+            "src.input_adapters.pounce_sheets.pounce_parser.load_pounce_workbook",
+            lambda file_path, role: SimpleNamespace(
+                parser=MagicMock(spec=ExcelsheetParser, sheet_dfs={}),
+                version=2,
+                original_sheets={},
+                original_sheet=lambda sheet: sheet,
+            ),
         )
 
         result, _ = PounceParser().parse_all("fake_project.xlsx")

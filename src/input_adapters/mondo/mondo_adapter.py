@@ -5,7 +5,7 @@ from typing import Generator, List, Optional
 from src.constants import DataSourceName
 from src.input_adapters.flat_file_adapter import FlatFileAdapter
 from src.models.datasource_version_info import DatasourceVersionInfo
-from src.models.disease import Disease, DiseaseParentEdge
+from src.models.disease import Disease, MondoDiseaseParentEdge
 
 
 class MondoBaseAdapter(FlatFileAdapter):
@@ -139,16 +139,16 @@ class MondoDiseaseParentEdgeAdapter(MondoBaseAdapter):
         return edge.get("pred") == "is_a"
 
     @staticmethod
-    def _to_parent_edge(child_id: str, parent_id: str) -> DiseaseParentEdge:
-        return DiseaseParentEdge(
+    def _to_parent_edge(child_id: str, parent_id: str) -> MondoDiseaseParentEdge:
+        return MondoDiseaseParentEdge(
             start_node=Disease(id=child_id),
             end_node=Disease(id=parent_id),
             source="MONDO",
         )
 
-    def get_all(self) -> Generator[List[DiseaseParentEdge], None, None]:
+    def get_all(self) -> Generator[List[MondoDiseaseParentEdge], None, None]:
         included_disease_ids = self._included_disease_ids()
-        edges: List[DiseaseParentEdge] = []
+        edges: List[MondoDiseaseParentEdge] = []
 
         for edge in self._get_graph().get("edges") or []:
             if not self._is_parent_edge(edge):

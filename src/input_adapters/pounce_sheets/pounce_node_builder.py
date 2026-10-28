@@ -16,6 +16,7 @@ _NA_VALUES = {"NA", "N/A", ""}
 from src.input_adapters.pounce_sheets.parsed_classes import ParsedPerson, ParsedProject
 from src.input_adapters.pounce_sheets.parsed_pounce_data import ParsedPounceData
 from src.input_adapters.pounce_sheets.pounce_parser import PounceParser
+from src.input_adapters.pounce_sheets.workbook_format import load_pounce_workbook
 from src.models.gene import MeasuredGene, MeasuredGeneEdge, Gene
 from src.models.metabolite import MeasuredMetabolite, MeasuredMetaboliteEdge, Metabolite
 from src.models.protein import MeasuredProtein, MeasuredProteinEdge, Protein
@@ -109,7 +110,7 @@ class PounceNodeBuilder:
 
     def build(self, project_file, experiment_files, stats_results_files, parser) -> Generator:
         print(f"reading: {project_file}")
-        project_data, _ = parser.parse_project(ExcelsheetParser(file_path=project_file))
+        project_data, _ = parser.parse_project(load_pounce_workbook(project_file, "project").parser)
         proj_obj = self._project_node(project_data.project, workbook_local_path=project_file)
         person_nodes, person_edges = self._person_nodes_and_edges(proj_obj, project_data.people)
         yield [proj_obj, *person_nodes, *person_edges]
@@ -117,9 +118,9 @@ class PounceNodeBuilder:
         yield from self._biosample_nodes(proj_obj, project_data)
 
         for exp_file, stats_file in _iter_pairs(experiment_files, stats_results_files):
-            exp_parser = ExcelsheetParser(file_path=exp_file)
+            exp_parser = load_pounce_workbook(exp_file, "experiment").parser
             exp_data, _ = parser.parse_experiment(exp_parser)
-            stats_parser = ExcelsheetParser(file_path=stats_file) if stats_file else None
+            stats_parser = load_pounce_workbook(stats_file, "stats").parser if stats_file else None
             stats_data, _ = parser.parse_stats_results(stats_parser) if stats_parser else (None, [])
             yield from self._experiment_nodes(
                 proj_obj,
@@ -513,6 +514,8 @@ class PounceNodeBuilder:
         metab_type_col = column_map.get(ExperimentWorkbook.MetabMapSheet.Key.metab_chemclass)
         id_level_col = column_map.get(ExperimentWorkbook.MetabMapSheet.Key.identification_level)
         alternate_id_col = column_map.get(ExperimentWorkbook.MetabMapSheet.Key.alternate_metab_id)
+        standardized_id_col = column_map.get("standardized_metab_id")
+        feature_id_format = getattr(parser, "pounce_version", 2) == 3
         alternate_symbol_col = column_map.get(ExperimentWorkbook.MetabMapSheet.Key.alternate_metab_symbol)
         pathway_ids_col = column_map.get(ExperimentWorkbook.MetabMapSheet.Key.pathway_ids)
 
@@ -525,6 +528,7 @@ class PounceNodeBuilder:
                 continue
 
             alternate_ids = self._split_pipe(row.get(alternate_id_col) if alternate_id_col else None)
+            standardized_ids = self._split_pipe(row.get(standardized_id_col) if standardized_id_col else None)
             alternate_names = self._split_pipe(row.get(alternate_symbol_col) if alternate_symbol_col else None)
             pathway_ids = self._split_pipe(row.get(pathway_ids_col) if pathway_ids_col else None)
 
@@ -541,7 +545,8 @@ class PounceNodeBuilder:
             metabolites.append(metab_obj)
             self._ctx.metabolite_by_raw_id[str(metab_id)] = metab_obj
 
-            for raw_id in [metab_id] + alternate_ids:
+            canonical_ids = ([] if feature_id_format else [metab_id]) + standardized_ids + alternate_ids
+            for raw_id in dict.fromkeys(canonical_ids):
                 metabolite_edges.append(MeasuredMetaboliteEdge(start_node=metab_obj, end_node=Metabolite(id=raw_id)))
 
         yield metabolites
@@ -922,6 +927,26 @@ class PounceNodeBuilder:
                     properties = None
 
                 col = ComparisonColumn.from_column_name(col_name)
+                if getattr(parser, "pounce_version", 2) == 3:
+                    v3_role = re.fullmatch(r"(ES|Pval|AdjPval)_result\d+", ncats_key)
+                    if v3_role:
+                        role = v3_role.group(1)
+                        col.stat_type = {
+                            "ES": "effect_size",
+                            "Pval": "pvalue",
+                            "AdjPval": "adjusted_pvalue",
+                        }[role]
+                        prefix_key = {
+                            "ES": "ES_1_prefix",
+                            "Pval": "ES_1_Pval_prefix",
+                            "AdjPval": "ES_1_adjPval_prefix",
+                        }[role]
+                        prefix = parser.safe_get_string("StatsResultsMeta", prefix_key)
+                        if prefix and col_name.startswith(prefix):
+                            remainder = col_name[len(prefix):].lstrip("_")
+                            group1, group2 = ComparisonColumn.parse_groups(remainder)
+                            col.group1, col.group2 = group1, group2
+                            col.comparison = f"{group1}_VS_{group2}" if group1 and group2 else group1
                 col.properties = properties
                 col.notes = notes
                 column_map[col_name] = col
@@ -939,7 +964,7 @@ class PounceNodeBuilder:
         """Null-safe split of a pipe-delimited cell value. Returns [] for blank/NaN."""
         if not isinstance(value, str) or not value.strip():
             return []
-        return [v.strip() for v in value.split('|') if v.strip()]
+        return [v.strip() for v in value.split('|') if v.strip() and v.strip().upper() not in _NA_VALUES]
 
     @staticmethod
     def _parse_int(value) -> Optional[int]:

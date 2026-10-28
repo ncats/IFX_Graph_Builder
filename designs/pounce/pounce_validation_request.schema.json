@@ -1,0 +1,113 @@
+{
+  "$defs": {
+    "SheetTable": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "columns": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Columns",
+          "type": "array"
+        },
+        "rows": {
+          "items": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "array"
+          },
+          "title": "Rows",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "columns",
+        "rows"
+      ],
+      "title": "SheetTable",
+      "type": "object"
+    },
+    "WorkbookTables": {
+      "additionalProperties": false,
+      "properties": {
+        "source_id": {
+          "minLength": 1,
+          "pattern": "^[^/\\\\]+$",
+          "title": "Source Id",
+          "type": "string"
+        },
+        "sheets": {
+          "items": {
+            "$ref": "#/$defs/SheetTable"
+          },
+          "title": "Sheets",
+          "type": "array"
+        }
+      },
+      "required": [
+        "source_id",
+        "sheets"
+      ],
+      "title": "WorkbookTables",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "project": {
+      "$ref": "#/$defs/WorkbookTables"
+    },
+    "experiments": {
+      "items": {
+        "$ref": "#/$defs/WorkbookTables"
+      },
+      "title": "Experiments",
+      "type": "array"
+    },
+    "stats_results": {
+      "items": {
+        "$ref": "#/$defs/WorkbookTables"
+      },
+      "title": "Stats Results",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "project",
+    "experiments",
+    "stats_results"
+  ],
+  "title": "PounceValidationRequest",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

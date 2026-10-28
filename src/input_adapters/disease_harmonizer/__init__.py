@@ -1,0 +1,1 @@
+"""DISEASES harmonizer consumer adapters."""

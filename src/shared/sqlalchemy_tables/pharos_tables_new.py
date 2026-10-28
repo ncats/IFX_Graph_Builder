@@ -351,6 +351,7 @@ class NcatsDisease(Base):
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    ifx_id = Column(String(64), nullable=True, unique=True)
     name = Column(String(255), nullable=False)
     uniprot_description = Column(Text)
     do_description = Column(Text)

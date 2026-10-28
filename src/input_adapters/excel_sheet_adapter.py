@@ -22,6 +22,24 @@ class ExcelsheetParser:
         self._parameter_map_cache = {}
         self._sheet_xml_paths = self._load_sheet_xml_paths()
 
+    @classmethod
+    def from_sheets(cls, file_name: str, sheets: Dict[str, pd.DataFrame]):
+        """Construct a parser from sheet data supplied by another transport."""
+        parser = cls.__new__(cls)
+        parser.file_path = file_name
+        parser.sheet_dfs = {}
+        for name, frame in sheets.items():
+            frame = frame.copy()
+            frame.columns = [c.strip() if isinstance(c, str) else c for c in frame.columns]
+            frame = frame.apply(lambda col: col.map(
+                lambda value: value.replace('\xa0', ' ').strip()
+                if isinstance(value, str) else value
+            ))
+            parser.sheet_dfs[name] = frame
+        parser._parameter_map_cache = {}
+        parser._sheet_xml_paths = {}
+        return parser
+
     def _read_all_sheets(self) -> Dict[str, pd.DataFrame]:
         xls = pd.ExcelFile(self.file_path)
         sheets = {}

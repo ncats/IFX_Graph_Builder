@@ -51,6 +51,29 @@ def test_etl_passes_adapter_field_conflict_behavior_to_output_adapter():
     assert output.store_calls[0]["field_conflict_behavior"] == FieldConflictBehavior.KeepLast
 
 
+def test_etl_acquires_lock_before_reset_and_releases_on_failure():
+    events = []
+    class LockedOutput(_RecordingOutputAdapter):
+        def acquire_run_lock(self, run_id, attempt_id):
+            events.append("lock")
+        def set_build_run_id(self, run_id):
+            events.append("set_run")
+        def reset_run_state(self, run_id):
+            events.append("reset")
+        def begin_run_attempt(self, run_id, resume, attempt_id):
+            events.append("begin")
+        def do_pre_processing(self):
+            raise RuntimeError("preprocessing failed")
+        def finish_run_attempt(self, run_id, attempt_id, outcome, elapsed_seconds, error_message=None):
+            events.append(outcome)
+        def release_run_lock(self, run_id, attempt_id):
+            events.append("unlock")
+
+    with pytest.raises(RuntimeError, match="preprocessing failed"):
+        ETL(input_adapters=[], output_adapters=[LockedOutput()]).do_etl(run_id="test-run")
+    assert events == ["lock", "set_run", "reset", "begin", "failed", "unlock"]
+
+
 def test_tdl_override_adapter_requests_keep_last_conflict_behavior(tmp_path):
     tdl_file = tmp_path / "tdl_updates.csv"
     tdl_file.write_text(

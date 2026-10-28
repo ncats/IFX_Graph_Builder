@@ -127,9 +127,6 @@ StatsResultsMeta:
     - lead_informatician_email
     - pre_processing_description
     - peri_processing_description
-    - ES
-    - ESadjPval
-    - ESPval
 
 
 EffectSize_Map:

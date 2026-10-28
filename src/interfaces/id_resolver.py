@@ -229,13 +229,20 @@ class IdResolver(ABC):
 
     def parse_entity_map(self, entity_map):
         match_map = {k: [v] for k, v in entity_map[IdResolver.MatchKeys.matched].items()}
+        newborn_map = entity_map[IdResolver.MatchKeys.newborns]
         if self.multi_match_behavior == MultiMatchBehavior.All:
-            newborn_map = entity_map[IdResolver.MatchKeys.newborns]
             for key, value in newborn_map.items():
                 if key in match_map:
                     match_map[key].extend(value)
                 else:
                     match_map[key] = value
+        elif self.multi_match_behavior == MultiMatchBehavior.Error and newborn_map:
+            source_id, additional = next(iter(newborn_map.items()))
+            targets = [node.id for node in match_map.get(source_id, []) + additional]
+            raise ValueError(
+                f"Identifier {source_id!r} resolves to multiple targets {targets}; "
+                "multi_match_behavior = 'Error'"
+            )
 
         if self.no_match_behavior == NoMatchBehavior.Allow:
             unmatched_map = {}

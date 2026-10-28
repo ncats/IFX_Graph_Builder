@@ -3,7 +3,7 @@ from datetime import date, datetime
 from typing import Union, List, Optional
 from src.constants import Prefix, DataSourceName
 from src.models.drgc_resource import DRGCResource
-from src.models.disease import Disease, DiseaseParentEdge, DODiseaseParentEdge, ProteinDiseaseEdge, TINXImportanceEdge
+from src.models.disease import Disease, DiseaseParentEdge, MondoDiseaseParentEdge, DODiseaseParentEdge, ProteinDiseaseEdge, TINXImportanceEdge
 from src.models.dto_class import DTOClass, DTOClassParentEdge, ProteinDTOClassEdge
 from src.models.expression import ProteinTissueExpressionEdge
 from src.models.external_link import ExternalLinkProvider, ProteinExternalLinkEdge
@@ -51,6 +51,8 @@ class TCRDOutputConverter(SQLOutputConverter):
         self._known_disease_types: set = set()
         self._disease_name_by_id: dict[str, str] = {}
         self._known_mondo_ids: set[str] = set()
+        self._disease_mondoid_by_id: dict[str, str | None] = {}
+        self._next_ncats_disease_id: int | None = None
         self._seen_protein2pubmed: set[tuple[int, str, int | None, str]] = set()
         self._target_id_by_uniprot: dict[str, int] = {}
         self._warned_missing_drgc_targets: set[tuple[str, str | None]] = set()
@@ -96,6 +98,7 @@ class TCRDOutputConverter(SQLOutputConverter):
             # Disease
             Disease: [self.ncats_disease_converter],
             DiseaseParentEdge: None,
+            MondoDiseaseParentEdge: None,
             DODiseaseParentEdge: None,
             ProteinDiseaseEdge: [self.disease_type_converter, self.disease_converter, self.ncats_d2da_converter],
             TINXImportanceEdge: [self.tinx_importance_converter],
@@ -131,6 +134,17 @@ class TCRDOutputConverter(SQLOutputConverter):
 
     def get_object_converters(self, obj_cls) -> Union[callable, List[callable], None]:
         return self._converters.get(obj_cls)
+
+    def resolve_id(self, table, id):
+        if table != 'ncats_disease':
+            return super().resolve_id(table, id)
+        mapping = self.id_mapping.setdefault(table, {})
+        if id not in mapping:
+            if self._next_ncats_disease_id is None:
+                self._next_ncats_disease_id = max(mapping.values(), default=0) + 1
+            mapping[id] = self._next_ncats_disease_id
+            self._next_ncats_disease_id += 1
+        return mapping[id]
 
     def word_count_converter(self, obj: dict) -> mysqlWordCount:
         return mysqlWordCount(word=obj["word"], count=obj["count"])
@@ -1181,29 +1195,62 @@ class TCRDOutputConverter(SQLOutputConverter):
         end_name = (obj.get('end_node') or {}).get('name')
         return end_name or self._disease_name_by_id.get(end_id) or end_id
 
+    def _mondoid_for_disease(self, obj: dict) -> str | None:
+        disease_id = obj['id']
+        if not disease_id.startswith('IFXDisease:'):
+            return disease_id if disease_id.startswith('MONDO:') and disease_id in self._known_mondo_ids else None
+        payload = obj.get('disease_harmonizer_payload') or {}
+        mondo_ids = {token.strip() for token in payload.get('MONDO_xref', '').split('|') if token.strip()}
+        if len(mondo_ids) > 1:
+            raise ValueError(f"{disease_id} has multiple exact MONDO aliases: {sorted(mondo_ids)}")
+        if not mondo_ids:
+            return None
+        mondoid = next(iter(mondo_ids))
+        if mondoid not in self._known_mondo_ids:
+            return None
+        return mondoid
+
     def ncats_disease_converter(self, obj: dict) -> NcatsDisease:
         disease_id = obj['id']
         self._disease_name_by_id[disease_id] = obj.get('name') or disease_id
-        mondoid = disease_id if disease_id.startswith('MONDO:') and disease_id in self._known_mondo_ids else None
+        mondoid = self._mondoid_for_disease(obj)
+        self._disease_mondoid_by_id[disease_id] = mondoid
+        payload = obj.get('disease_harmonizer_payload')
+        if disease_id.startswith('IFXDisease:') and not isinstance(payload, dict):
+            raise ValueError(f"{disease_id} has no DISEASES payload for Pharos conversion")
+        rare = obj.get('rare_disease')
+        if isinstance(payload, dict):
+            raw_rare = payload.get('is_rare')
+            if raw_rare not in {'true', 'false'}:
+                raise ValueError(f"{disease_id} has invalid DISEASES is_rare {raw_rare!r}")
+            rare = raw_rare == 'true'
         return NcatsDisease(
             id=self.resolve_id('ncats_disease', disease_id),
+            ifx_id=disease_id if disease_id.startswith('IFXDisease:') else None,
             name=obj.get('name') or disease_id,
             uniprot_description=obj.get('uniprot_description'),
             do_description=obj.get('do_description'),
             mondo_description=obj.get('mondo_description'),
             mondoid=mondoid,
-            gard_rare=obj.get('rare_disease'),
+            gard_rare=rare,
             novelty=min(obj.get('novelty') or []) if obj.get('novelty') else None,
             provenance=obj['provenance'],
         )
 
     def disease_converter(self, obj: dict) -> List[mysqlDisease]:
         resolved_disease_id = obj['end_id']
-        mondoid = (
-            resolved_disease_id
-            if resolved_disease_id and resolved_disease_id.startswith('MONDO:') and resolved_disease_id in self._known_mondo_ids
-            else None
-        )
+        if resolved_disease_id and resolved_disease_id.startswith('IFXDisease:'):
+            if resolved_disease_id not in self._disease_mondoid_by_id:
+                raise ValueError(
+                    f"DISEASES node {resolved_disease_id} must be converted before its associations"
+                )
+            mondoid = self._disease_mondoid_by_id[resolved_disease_id]
+        else:
+            mondoid = (
+                resolved_disease_id
+                if resolved_disease_id and resolved_disease_id.startswith('MONDO:') and resolved_disease_id in self._known_mondo_ids
+                else None
+            )
         disease_name = self._disease_name(obj)
         rows = []
         for ordinal, detail in enumerate(self._iter_disease_details(obj)):

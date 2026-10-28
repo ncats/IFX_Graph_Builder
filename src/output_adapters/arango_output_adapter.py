@@ -1,5 +1,6 @@
 import dataclasses
 import hashlib
+import json
 import os
 import platform
 import socket
@@ -38,6 +39,7 @@ from src.infrastructure.object_storage import (
 
 class ArangoOutputAdapter(OutputAdapter, ArangoAdapter):
     NODE_MERGE_METADATA_FIELDS = ("_key", "id", "creation", "updates", "resolved_ids")
+    BUILD_DIAGNOSTICS_COLLECTION = "build_diagnostics"
 
     def __init__(self, credentials, database_name, object_storage_credentials=None):
         self._collection_schemas = {}
@@ -802,13 +804,62 @@ class ArangoOutputAdapter(OutputAdapter, ArangoAdapter):
     def _checkpoint_doc_key(self, run_id: str) -> str:
         return f"etl_checkpoint__{self.safe_key(run_id)}"
 
+    def _run_lock_key(self, run_id: str) -> str:
+        return f"etl_run_lock__{self.safe_key(run_id)}"
+
+    @staticmethod
+    def _owner_is_live(owner: dict) -> bool:
+        if owner.get("hostname") != socket.gethostname() or not isinstance(owner.get("pid"), int):
+            return True
+        try:
+            os.kill(owner["pid"], 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+
+    def acquire_run_lock(self, run_id: str, attempt_id: str) -> None:
+        store = self.get_metadata_store(truncate=False)
+        key = self._run_lock_key(run_id)
+        payload = {
+            "_key": key, "type": "etl_run_lock", "run_id": run_id,
+            "attempt_id": attempt_id, "hostname": socket.gethostname(), "pid": os.getpid(),
+            "started_at": datetime.now(timezone.utc).isoformat(),
+        }
+        try:
+            store.insert(payload)
+            return
+        except DocumentInsertError:
+            owner = store.get(key)
+            if not owner or self._owner_is_live(owner):
+                raise RuntimeError(f"Build {run_id} already has an active or unverifiable run lock")
+            # Revision checking allows only one contender to recover a dead process's lock.
+            self.get_db().aql.execute(
+                "REMOVE { _key: @key, _rev: @rev } IN metadata_store OPTIONS { ignoreRevs: false }",
+                bind_vars={"key": key, "rev": owner["_rev"]},
+            )
+            store.insert(payload)
+
+    def release_run_lock(self, run_id: str, attempt_id: str) -> None:
+        key = self._run_lock_key(run_id)
+        store = self.get_metadata_store(truncate=False)
+        owner = store.get(key)
+        if owner and owner.get("attempt_id") == attempt_id:
+            self.get_db().aql.execute(
+                "REMOVE { _key: @key, _rev: @rev } IN metadata_store OPTIONS { ignoreRevs: false }",
+                bind_vars={"key": key, "rev": owner["_rev"]},
+            )
+
     def _read_checkpoint_doc(self, run_id: str) -> dict:
         store = self.get_metadata_store(truncate=False)
         return store.get(self._checkpoint_doc_key(run_id)) or {}
 
     def _write_checkpoint_doc(self, run_id: str, doc: dict) -> None:
         store = self.get_metadata_store(truncate=False)
+        previous = store.get(self._checkpoint_doc_key(run_id)) or {}
         payload = {
+            **{key: value for key, value in previous.items() if not key.startswith("_")},
             "_key": self._checkpoint_doc_key(run_id),
             "type": "etl_checkpoint",
             "run_id": run_id,
@@ -816,6 +867,35 @@ class ArangoOutputAdapter(OutputAdapter, ArangoAdapter):
             "last_updated": datetime.now().isoformat(),
         }
         store.insert(payload, overwrite=True)
+
+    def begin_run_attempt(self, run_id: str, resume: bool, attempt_id: str) -> None:
+        doc = self._read_checkpoint_doc(run_id)
+        attempts = list(doc.get("attempts") or [])
+        now = datetime.now(timezone.utc).isoformat()
+        if attempts and attempts[-1].get("status") == "running":
+            if not resume:
+                raise RuntimeError(f"Build {run_id} already has an active attempt")
+            owner = attempts[-1]
+            if self._owner_is_live(owner):
+                raise RuntimeError(f"Build {run_id} is still owned by process {owner.get('pid', 'unknown')}")
+            attempts[-1] = {**attempts[-1], "status": "interrupted"}
+        attempts.append({
+            "id": attempt_id, "resume": resume, "started_at": now,
+            "status": "running", "hostname": socket.gethostname(), "pid": os.getpid(),
+        })
+        self._write_checkpoint_doc(run_id, {"attempts": attempts})
+
+    def finish_run_attempt(self, run_id: str, attempt_id: str, outcome: str, elapsed_seconds: float,
+                           error_message: str | None = None) -> None:
+        doc = self._read_checkpoint_doc(run_id)
+        attempts = list(doc.get("attempts") or [])
+        if not attempts or attempts[-1].get("id") != attempt_id or attempts[-1].get("status") != "running":
+            raise RuntimeError(f"Build attempt {attempt_id} is no longer active")
+        attempts[-1] = {
+            **attempts[-1], "status": outcome, "ended_at": datetime.now(timezone.utc).isoformat(),
+            "elapsed_seconds": elapsed_seconds, "error_message": error_message,
+        }
+        self._write_checkpoint_doc(run_id, {"attempts": attempts})
 
     def _upsert_collection_schemas_doc(self) -> None:
         if not self._collection_schemas:
@@ -841,9 +921,165 @@ class ArangoOutputAdapter(OutputAdapter, ArangoAdapter):
         existing = store.get(self._checkpoint_doc_key(run_id))
         if existing:
             store.delete(existing["_key"])
+        if self.get_db().has_collection(self.BUILD_DIAGNOSTICS_COLLECTION):
+            self.get_db().aql.execute(
+                "FOR d IN build_diagnostics FILTER d.run_id == @run_id REMOVE d IN build_diagnostics",
+                bind_vars={"run_id": run_id},
+                max_runtime=600,
+            )
+
+    def _build_diagnostics_collection(self):
+        db = self.get_db()
+        name = self.BUILD_DIAGNOSTICS_COLLECTION
+        if not db.has_collection(name):
+            collection = db.create_collection(name)
+            collection.add_persistent_index(fields=["run_id", "kind", "adapter"])
+            return collection
+        return db.collection(name)
+
+    @staticmethod
+    def _diagnostic_key(parts: list[str]) -> str:
+        return hashlib.sha256(json.dumps(parts, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+    def set_build_run_id(self, run_id: str) -> None:
+        self._build_run_id = run_id
+        self._build_diagnostics_collection()
+        self.get_metadata_store(truncate=False).insert(
+            {
+                "_key": f"build_diagnostics__{self.safe_key(run_id)}",
+                "type": "build_diagnostics_status",
+                "run_id": run_id,
+                "status": "partial",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            },
+            overwrite=True,
+        )
+
+    def record_unmatched_ids(self, run_id: str, adapter_name: str, phase: str, issues: list[dict]) -> None:
+        if not issues:
+            return
+        self._build_diagnostics_collection()
+        now = datetime.now(timezone.utc).isoformat()
+        records = []
+        for issue in issues:
+            records.append({
+                "_key": self._diagnostic_key([
+                    "unmatched_id", run_id, adapter_name, phase,
+                    issue["node_type"], issue["source_id"], issue["endpoint_role"],
+                ]),
+                "kind": "unmatched_id",
+                "run_id": run_id,
+                "phase": phase,
+                "adapter": adapter_name,
+                "node_type": issue["node_type"],
+                "source_id": issue["source_id"],
+                "endpoint_role": issue["endpoint_role"],
+                "occurrences": issue["occurrences"],
+                "last_seen_at": now,
+            })
+        for start in range(0, len(records), 1000):
+            self.get_db().aql.execute(
+                """
+                FOR issue IN @issues
+                    UPSERT { _key: issue._key }
+                    INSERT issue
+                    UPDATE {
+                        occurrences: OLD.occurrences + issue.occurrences,
+                        last_seen_at: issue.last_seen_at
+                    } IN build_diagnostics
+                """,
+                bind_vars={"issues": records[start:start + 1000]},
+                max_runtime=600,
+            )
+
+    def _record_dangling_edges(self, run_id: str, collection_name: str, edges: list[dict], status: str) -> None:
+        if not edges:
+            return
+        self._build_diagnostics_collection()
+        records = [{
+            "_key": self._diagnostic_key(["dangling_edge", run_id, collection_name, edge["_key"]]),
+            "kind": "dangling_edge",
+            "run_id": run_id,
+            "phase": "cleanup",
+            "edge_collection": collection_name,
+            "edge_key": edge["_key"],
+            "from_id": edge["_from"],
+            "to_id": edge["_to"],
+            "missing_from": edge["missing_from"],
+            "missing_to": edge["missing_to"],
+            "status": status,
+        } for edge in edges]
+        for start in range(0, len(records), 1000):
+            self.get_db().aql.execute(
+                """
+                FOR issue IN @issues
+                    UPSERT { _key: issue._key }
+                    INSERT issue
+                    UPDATE { status: issue.status } IN build_diagnostics
+                """,
+                bind_vars={"issues": records[start:start + 1000]},
+                max_runtime=600,
+            )
+
+    def finish_build_diagnostics(self, run_id: str) -> None:
+        self._reconcile_observed_dangling_edges(run_id)
+        counts = self.get_db().aql.execute(
+            """
+            FOR d IN build_diagnostics
+                FILTER d.run_id == @run_id
+                COLLECT kind = d.kind, status = d.status WITH COUNT INTO count
+                RETURN {kind, status, count}
+            """,
+            bind_vars={"run_id": run_id},
+            max_runtime=600,
+        )
+        summary = {f"{row['kind']}:{row.get('status') or 'recorded'}": row['count'] for row in counts}
+        if summary.get("dangling_edge:observed", 0):
+            raise RuntimeError("Build diagnostics still contain dangling edges whose deletion was not confirmed")
+        self.get_metadata_store(truncate=False).insert(
+            {
+                "_key": f"build_diagnostics__{self.safe_key(run_id)}",
+                "type": "build_diagnostics_status",
+                "run_id": run_id,
+                "status": "complete",
+                "summary": summary,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            },
+            overwrite=True,
+        )
+        print(f"Build diagnostics: {self.BUILD_DIAGNOSTICS_COLLECTION} {summary}")
+
+    def _reconcile_observed_dangling_edges(self, run_id: str) -> None:
+        db = self.get_db()
+        observed = db.aql.execute(
+            "FOR d IN build_diagnostics FILTER d.run_id == @run_id AND d.kind == 'dangling_edge' AND d.status == 'observed' RETURN d",
+            bind_vars={"run_id": run_id},
+            max_runtime=600,
+        )
+        missing_keys = []
+        for issue in observed:
+            collection_name = issue["edge_collection"]
+            if not db.has_collection(collection_name) or db.collection(collection_name).get(issue["edge_key"]) is None:
+                missing_keys.append(issue["_key"])
+        for start in range(0, len(missing_keys), 1000):
+            db.aql.execute(
+                "FOR key IN @keys UPDATE key WITH { status: 'deleted' } IN build_diagnostics",
+                bind_vars={"keys": missing_keys[start:start + 1000]},
+                max_runtime=600,
+            )
 
     def mark_adapter_running(self, run_id: str, adapter_name: str, adapter_position: int | None = None,
                              adapter_total: int | None = None) -> None:
+        self._build_diagnostics_collection()
+        self.get_db().aql.execute(
+            """
+            FOR d IN build_diagnostics
+                FILTER d.run_id == @run_id AND d.kind == "unmatched_id" AND d.adapter == @adapter
+                REMOVE d IN build_diagnostics
+            """,
+            bind_vars={"run_id": run_id, "adapter": adapter_name},
+            max_runtime=600,
+        )
         doc = self._read_checkpoint_doc(run_id)
         adapters = dict(doc.get("adapters", {}) or {})
         previous = dict(adapters.get(adapter_name, {}) or {})
@@ -892,7 +1128,7 @@ class ArangoOutputAdapter(OutputAdapter, ArangoAdapter):
 
     def get_metadata(self) -> DatabaseMetadata:
         collections: List[CollectionMetadata] = []
-        ignore_list = [self.metadata_store_label]
+        ignore_list = [self.metadata_store_label, self.BUILD_DIAGNOSTICS_COLLECTION]
         ignore_prefixes = ("MetaboliteHarmonizationClique",)
 
         db = self.get_db()
@@ -1190,12 +1426,19 @@ class ArangoOutputAdapter(OutputAdapter, ArangoAdapter):
 
                 # Find dangling edges
                 dangling_keys = []
+                dangling_edges = []
                 for edge in edges:
-                    if not from_exists.get(edge['_from'], True) or not to_exists.get(edge['_to'], True):
+                    missing_from = not from_exists.get(edge['_from'], True)
+                    missing_to = not to_exists.get(edge['_to'], True)
+                    if missing_from or missing_to:
                         dangling_keys.append(edge['_key'])
+                        dangling_edges.append({**edge, "missing_from": missing_from, "missing_to": missing_to})
 
                 # Step 3: Delete dangling edges by key
                 if dangling_keys:
+                    run_id = getattr(self, "_build_run_id", None)
+                    if run_id:
+                        self._record_dangling_edges(run_id, collection_name, dangling_edges, "observed")
                     db.aql.execute(
                         f"""
                         FOR key IN @keys
@@ -1205,6 +1448,8 @@ class ArangoOutputAdapter(OutputAdapter, ArangoAdapter):
                         batch_size=max(100, min(len(dangling_keys), 1000)),
                         max_runtime=600,
                     )
+                    if run_id:
+                        self._record_dangling_edges(run_id, collection_name, dangling_edges, "deleted")
 
                 deleted_count = len(dangling_keys)
                 total_deleted += deleted_count

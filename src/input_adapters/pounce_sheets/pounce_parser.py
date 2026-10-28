@@ -32,6 +32,7 @@ from src.input_adapters.pounce_sheets.parsed_classes import (
 from src.input_adapters.pounce_sheets.constants import ExperimentWorkbook, ProjectWorkbook, StatsResultsWorkbook
 from src.input_adapters.pounce_sheets.parsed_pounce_data import ParsedPounceData
 from src.input_adapters.pounce_sheets.sheet_field import get_sheet_fields
+from src.input_adapters.pounce_sheets.workbook_format import load_pounce_workbook, restore_pounce_issue
 
 # Sheet sets for structural validation, derived from constants.
 _PROJECT_REQUIRED_SHEETS: Set[str] = {
@@ -89,11 +90,18 @@ _KNOWN_KEYS_BY_SHEET[StatsResultsWorkbook.EffectSizeMapSheet.name] = {
     StatsResultsWorkbook.EffectSizeMapSheet.Key.gene_id,
     StatsResultsWorkbook.EffectSizeMapSheet.Key.metabolite_id,
     StatsResultsWorkbook.EffectSizeMapSheet.Key.protein_id,
+    "ES_result{}", "Pval_result{}", "AdjPval_result{}",
 }
 
 # Placeholder key used in EffectSize_Map rows that don't yet have an NCATSDPI name.
 # Treated as NA: silently skipped in unknown-key checks and column-existence checks.
 _PLACEHOLDER_KEY = "NA (submitter creates new values)"
+
+
+def _restore_issue_sheets(issues, workbook) -> None:
+    """Show submitted sheet names after checking the normalized workbook."""
+    for issue in issues:
+        restore_pounce_issue(issue, workbook.original_sheets, workbook.version)
 
 
 class PounceParser:
@@ -109,7 +117,10 @@ class PounceParser:
         if parse_type == "string":
             return parser.safe_get_string(sheet, key)
         if parse_type == "string_list":
-            return parser.get_one_string_list(sheet, key)
+            try:
+                return parser.get_one_string_list(sheet, key)
+            except (LookupError, KeyError):
+                return []
         if parse_type == "date":
             try:
                 return parser.get_one_date(sheet, key).date()
@@ -383,8 +394,10 @@ class PounceParser:
         if "MetabMap" in parser.sheet_dfs and "MetabMeta" in parser.sheet_dfs:
             issues.extend(self._check_mapped_columns(parser, "MetabMap", "MetabMeta", metab_map))
             for _, row in parser.sheet_dfs["MetabMeta"].iterrows():
-                data.metabolites.append(
-                    self._parse_mapped_row(row, metab_map, ParsedMetab))
+                metabolite = self._parse_mapped_row(row, metab_map, ParsedMetab)
+                metabolite.metab_id_is_feature = getattr(parser, "pounce_version", 2) == 3
+                metabolite.source_file = getattr(parser, "file_path", None)
+                data.metabolites.append(metabolite)
 
         # --- Data matrix ID cross-references (per-experiment, before merging) ---
         # Check that every gene/metabolite ID in the data matrix exists in the meta sheet.
@@ -469,7 +482,8 @@ class PounceParser:
                              valid_gene_ids: Optional[Set[str]] = None,
                              valid_metab_ids: Optional[Set[str]] = None,
                              valid_protein_ids: Optional[Set[str]] = None,
-                             valid_run_biosample_ids: Optional[Set[str]] = None):
+                             valid_run_biosample_ids: Optional[Set[str]] = None,
+                             expected_analyte: Optional[str] = None):
         """Parse a stats results workbook (metadata only).
 
         ``valid_gene_ids``, ``valid_metab_ids``, ``valid_protein_ids``, and ``valid_run_biosample_ids``
@@ -487,12 +501,38 @@ class PounceParser:
         if "StatsResultsMeta" in parser.sheet_dfs:
             issues.extend(self._check_unknown_keys(parser, "StatsResultsMeta", "StatsResultsMeta"))
             data.stats_results.append(self.parse_meta_sheet(parser, ParsedStatsResultsMeta))
+            if getattr(parser, "pounce_version", 2) == 2:
+                required_stats_keys = ("ES", "ESPval", "ESadjPval")
+            else:
+                required_stats_keys = ("ES", "ES_1_prefix")
+            for key in required_stats_keys:
+                if not parser.safe_get_string("StatsResultsMeta", key):
+                    issues.append(ValidationError(
+                        severity="error", entity="stats_results", field=key,
+                        sheet="StatsResultsMeta", source_file=parser.file_path,
+                        message=f"StatsResultsMeta is missing required value: {key}",
+                    ))
 
         # --- EffectSize_Map (map sheet) ---
         if "EffectSize_Map" in parser.sheet_dfs:
             issues.extend(self._check_unknown_keys(parser, "EffectSize_Map", "EffectSize_Map"))
             effect_size_map = parser.get_parameter_map("EffectSize_Map")
             data.param_maps[StatsResultsWorkbook.EffectSizeMapSheet.name] = effect_size_map
+            if expected_analyte:
+                analyte_keys = {
+                    "gene": "gene_id", "metabolite": "metabolite_id", "protein": "protein_id",
+                }
+                active_keys = {
+                    family for family, key in analyte_keys.items()
+                    if effect_size_map.get(key) not in (None, "", "NA", "N/A")
+                }
+                if expected_analyte not in active_keys:
+                    issues.append(ValidationError(
+                        severity="error", entity="parse", field="EffectSize_Map",
+                        sheet="EffectSize_Map", source_file=parser.file_path,
+                        message=(f"StatsResults analyte mapping does not match its paired "
+                                 f"{expected_analyte} experiment"),
+                    ))
             # Validate that every mapped column name exists in the EffectSize sheet.
             # EffectSize_Map values may be pipe-delimited ("col_name | property");
             # only the first segment is the actual column name.
@@ -558,24 +598,32 @@ class PounceParser:
 
     def parse_all(self, project_file: str,
                   experiment_files: List[str] = None,
-                  stats_files: List[str] = None):
+                  stats_files: List[str] = None,
+                  workbook_loader=None):
         """Parse all workbooks into a single :class:`ParsedPounceData`.
 
         Returns ``(ParsedPounceData, List[ValidationError])``.
         """
         experiment_files = experiment_files or []
         stats_files = stats_files or []
+        workbook_loader = workbook_loader or load_pounce_workbook
 
-        project_parser = ExcelsheetParser(file_path=project_file)
-        combined, issues = self.parse_project(project_parser)
+        project_workbook = workbook_loader(project_file, "project")
+        combined, issues = self.parse_project(project_workbook.parser)
+        combined.workbook_versions[project_file] = project_workbook.version
+        combined.original_sheets[project_file] = project_workbook.original_sheets
+        _restore_issue_sheets(issues, project_workbook)
 
         # Build the valid biosample ID set from the project (available for all experiments).
         valid_biosample_ids = {str(b.biosample_id).strip() for b in combined.biosamples if b.biosample_id} or None
 
         for i, exp_file in enumerate(experiment_files):
-            exp_parser = ExcelsheetParser(file_path=exp_file)
+            exp_workbook = workbook_loader(exp_file, "experiment")
             exp_data, exp_issues = self.parse_experiment(
-                exp_parser, valid_biosample_ids=valid_biosample_ids)
+                exp_workbook.parser, valid_biosample_ids=valid_biosample_ids)
+            combined.workbook_versions[exp_file] = exp_workbook.version
+            combined.original_sheets[exp_file] = exp_workbook.original_sheets
+            _restore_issue_sheets(exp_issues, exp_workbook)
             combined.experiments.extend(exp_data.experiments)
             combined.genes.extend(exp_data.genes)
             combined.proteins.extend(exp_data.proteins)
@@ -594,25 +642,38 @@ class PounceParser:
                 valid_metab_ids = {str(m.metab_id).strip() for m in exp_data.metabolites if m.metab_id} or None
                 valid_protein_ids = {str(p.protein_id).strip() for p in exp_data.proteins if p.protein_id} or None
                 valid_run_biosample_ids = {str(rb.run_biosample_id).strip() for rb in exp_data.run_biosamples if rb.run_biosample_id} or None
-                stats_parser = ExcelsheetParser(file_path=stats_files[i])
+                stats_workbook = workbook_loader(stats_files[i], "stats")
+                stats_parser = stats_workbook.parser
                 stats_data, stats_issues = self.parse_stats_results(
                     stats_parser,
                     valid_gene_ids=valid_gene_ids,
                     valid_metab_ids=valid_metab_ids,
                     valid_protein_ids=valid_protein_ids,
                     valid_run_biosample_ids=valid_run_biosample_ids,
+                    expected_analyte=(
+                        "gene" if "GeneMap" in exp_workbook.parser.sheet_dfs else
+                        "protein" if "ProteinMap" in exp_workbook.parser.sheet_dfs else
+                        "metabolite" if "MetabMap" in exp_workbook.parser.sheet_dfs else None
+                    ),
                 )
                 combined.stats_results.extend(stats_data.stats_results)
                 combined.param_maps.update(stats_data.param_maps)
+                combined.workbook_versions[stats_files[i]] = stats_workbook.version
+                combined.original_sheets[stats_files[i]] = stats_workbook.original_sheets
+                _restore_issue_sheets(stats_issues, stats_workbook)
                 issues.extend(stats_issues)
 
         # Any stats files beyond the number of experiment files (unusual) get
         # parsed without ID cross-reference checks.
         for stats_file in stats_files[len(experiment_files):]:
-            stats_parser = ExcelsheetParser(file_path=stats_file)
+            stats_workbook = workbook_loader(stats_file, "stats")
+            stats_parser = stats_workbook.parser
             stats_data, stats_issues = self.parse_stats_results(stats_parser)
             combined.stats_results.extend(stats_data.stats_results)
             combined.param_maps.update(stats_data.param_maps)
+            combined.workbook_versions[stats_file] = stats_workbook.version
+            combined.original_sheets[stats_file] = stats_workbook.original_sheets
+            _restore_issue_sheets(stats_issues, stats_workbook)
             issues.extend(stats_issues)
 
         return combined, issues

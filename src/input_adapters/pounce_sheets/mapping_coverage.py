@@ -34,24 +34,27 @@ def check_metabolite_coverage(
     """
     from src.models.metabolite import Metabolite
 
-    # Deduplicate by metab_id — the same ID can appear in multiple experiment
-    # files when a submission has more than one experiment workbook.
-    seen: dict[str, ParsedMetab] = {}
+    # V2 primary IDs are shared identifiers. V3 feature IDs are scoped to their
+    # experiment workbook and may repeat with different standardized IDs.
+    seen: dict[object, ParsedMetab] = {}
     for m in metabolites:
-        if m.metab_id and m.metab_id not in seen:
-            seen[m.metab_id] = m
+        key = (m.source_file, m.metab_id) if m.metab_id_is_feature else m.metab_id
+        if m.metab_id and key not in seen:
+            seen[key] = m
     unique_metabolites = list(seen.values())
 
     mapped = 0
     unmapped_ids = []
 
     for m in unique_metabolites:
-        ids = [m.metab_id]
+        ids = [] if m.metab_id_is_feature else [m.metab_id]
+        if m.standardized_metab_id:
+            ids += [x.strip() for x in m.standardized_metab_id.split("|") if x.strip()]
         if m.alternate_metab_id:
             ids += [x.strip() for x in m.alternate_metab_id.split("|") if x.strip()]
 
         stubs = [Metabolite(id=i) for i in ids]
-        results = resolver.resolve_internal(stubs)
+        results = resolver.resolve_internal(stubs) if stubs else {}
         did_map = any(len(results.get(stub.id, [])) > 0 for stub in stubs)
 
         if did_map:

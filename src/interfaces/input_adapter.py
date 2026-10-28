@@ -1,5 +1,6 @@
 import copy
 from abc import ABC, abstractmethod
+from collections import Counter
 from typing import List, Union, Dict, Generator, Any
 
 from src.constants import DataSourceName
@@ -13,6 +14,23 @@ class InputAdapter(ABC):
     batch_size = 25000
     single_source: bool = False
     field_conflict_behavior: FieldConflictBehavior = FieldConflictBehavior.KeepFirst
+
+    def set_unmatched_reporter(self, reporter):
+        self._unmatched_reporter = reporter
+
+    def _report_unmatched(self, node_type: str, role: str, counts: Counter, unmatched: dict):
+        reporter = getattr(self, "_unmatched_reporter", None)
+        if reporter and unmatched:
+            reporter([
+                {
+                    "node_type": node_type,
+                    "source_id": source_id,
+                    "endpoint_role": role,
+                    "occurrences": counts[source_id],
+                }
+                for source_id in unmatched
+                if counts[source_id]
+            ])
 
     @staticmethod
     def _canonicalize_relationship_class(
@@ -121,6 +139,10 @@ class InputAdapter(ABC):
                         resolver = resolver_map[type]
                         allow_retype = resolver.canonical_class is not None
                         entity_map = resolver.resolve_nodes(node_list, allow_retype=allow_retype)
+                        self._report_unmatched(
+                            type, "node", Counter(node.id for node in node_list),
+                            entity_map[IdResolver.MatchKeys.unmatched],
+                        )
                         resolved_nodes.extend(resolver.parse_flat_node_list_from_map(entity_map))
                     else:
                         resolved_nodes.extend(node_list)
@@ -140,6 +162,8 @@ class InputAdapter(ABC):
 
             if len(relationships) > 0:
                 temp_nodes = [entry.start_node for entry in relationships] + [entry.end_node for entry in relationships]
+                start_counts = Counter((entry.start_node.__class__.__name__, entry.start_node.id) for entry in relationships)
+                end_counts = Counter((entry.end_node.__class__.__name__, entry.end_node.id) for entry in relationships)
                 type_map = {}
                 node_map = {}
 
@@ -153,6 +177,15 @@ class InputAdapter(ABC):
                     if type in resolver_map:
                         resolver = resolver_map[type]
                         temp_node_map = resolver.resolve_nodes(type_map[type], allow_retype=True)
+                        unmatched = temp_node_map[IdResolver.MatchKeys.unmatched]
+                        self._report_unmatched(
+                            type, "start", Counter({source_id: start_counts[(type, source_id)] for source_id in unmatched}),
+                            unmatched,
+                        )
+                        self._report_unmatched(
+                            type, "end", Counter({source_id: end_counts[(type, source_id)] for source_id in unmatched}),
+                            unmatched,
+                        )
                         parsed_node_map = resolver.parse_entity_map(temp_node_map)
                         for original_id, resolved_nodes in parsed_node_map.items():
                             node_map[(type, original_id)] = resolved_nodes

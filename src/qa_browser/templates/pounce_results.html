@@ -87,6 +87,19 @@
 </div>
 {% endif %}
 
+{% if file_versions %}
+<div class="card" style="margin-bottom: 1.25rem;">
+    <div style="font-size: 12px; font-weight: 700; color: var(--text-muted); margin-bottom: 0.5rem;">Recognized workbooks</div>
+    {% for role, filename, version in file_versions %}
+    <div style="display: flex; gap: 0.75rem; align-items: baseline; font-size: 13px; padding: 0.2rem 0;">
+        <span style="min-width: 100px; color: var(--text-muted);">{{ role }}</span>
+        <span style="overflow-wrap: anywhere;">{{ filename }}</span>
+        <span class="badge">{{ version }}</span>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
 {# ── Summary counts ──────────────────────────────────────────────────────── #}
 {% if parsed_data %}
 <div class="stats-row">

@@ -42,6 +42,14 @@ class ParsedProject:
     lab_groups: Optional[List[str]] = sheet_field(
         key="lab_groups", sheet="ProjectMeta", parse="string_list",
         default_factory=list)
+    organizations: Optional[List[str]] = sheet_field(
+        key="Organizations", sheet="ProjectMeta", parse="string_list",
+        default_factory=list)
+    program_tags: Optional[List[str]] = sheet_field(
+        key="program_tag", sheet="ProjectMeta", parse="string_list",
+        default_factory=list)
+    project_biosample_tracking: Optional[str] = sheet_field(
+        key="biosample_tracking", sheet="ProjectMeta")
     keywords: Optional[List[str]] = sheet_field(
         key="keywords", sheet="ProjectMeta", parse="string_list",
         default_factory=list)
@@ -75,6 +83,8 @@ class ParsedBiosample:
         key="biosample_type", sheet="BioSampleMeta")
     biosample_tracking: Optional[str] = sheet_field(
         key="biosample_tracking", sheet="BioSampleMeta")
+    biosample_batch: Optional[str] = sheet_field(
+        key="biosample_batch", sheet="BioSampleMeta")
 
 
 @dataclass
@@ -152,6 +162,8 @@ class ParsedExposure:
 class ParsedExperiment:
     experiment_name: Optional[str] = sheet_field(
         key="experiment_name", sheet="ExperimentMeta")
+    associated_project_name: Optional[str] = sheet_field(
+        key="associated_project_name", sheet="ExperimentMeta")
     experiment_description: Optional[str] = sheet_field(
         key="experiment_description", sheet="ExperimentMeta")
     experiment_design: Optional[str] = sheet_field(
@@ -189,10 +201,15 @@ class ParsedExperiment:
         key="acquisition_method", sheet="ExperimentMeta")
     metabolite_identification_description: Optional[str] = sheet_field(
         key="metabolite_identification_description", sheet="ExperimentMeta")
+    protein_identification_description: Optional[str] = sheet_field(
+        key="protein_identification_description", sheet="ExperimentMeta")
     experiment_data_file: Optional[str] = sheet_field(
         key="experiment_data_file", sheet="ExperimentMeta")
     attached_files: Optional[List[str]] = sheet_field(
         key="attached_file_{}", sheet="ExperimentMeta", indexed=True,
+        default_factory=list)
+    attached_file_descriptions: Optional[List[str]] = sheet_field(
+        key="attached_file_{}_description", sheet="ExperimentMeta", indexed=True,
         default_factory=list)
 
 
@@ -246,6 +263,12 @@ class ParsedProtein:
 class ParsedMetab:
     metab_id: Optional[str] = sheet_field(
         key="metab_id", sheet="MetabMeta")
+    # In v3, metab_id is the measured feature ID; standardized_metab_id is
+    # separately supplied and is the only v3 ID eligible for canonical lookup.
+    standardized_metab_id: Optional[str] = sheet_field(
+        key="standardized_metab_id", sheet="MetabMeta")
+    metab_id_is_feature: bool = False
+    source_file: Optional[str] = None
     metab_name: Optional[str] = sheet_field(
         key="metab_name", sheet="MetabMeta")
     metab_chemclass: Optional[str] = sheet_field(
@@ -286,6 +309,10 @@ class ParsedRawDataMeta:
         key="pre_processing_description", sheet="RawDataMeta")
     peakdata_tag: Optional[str] = sheet_field(
         key="peakdata_tag", sheet="RawDataMeta")
+    reference_genome: Optional[str] = sheet_field(
+        key="reference_genome", sheet="RawDataMeta")
+    gene_or_transcript: Optional[str] = sheet_field(
+        key="Gene or Transcript", sheet="RawDataMeta")
 
 
 @dataclass
@@ -319,6 +346,8 @@ class ParsedRunBiosample:
         parse="int")
     batch: Optional[str] = sheet_field(
         key="batch", sheet="RunBioSampleMeta")
+    runbiosample_file: Optional[str] = sheet_field(
+        key="runbiosample_file", sheet="RunBioSampleMeta")
 
 
 # ---------------------------------------------------------------------------
@@ -327,6 +356,8 @@ class ParsedRunBiosample:
 
 @dataclass
 class ParsedStatsResultsMeta:
+    statsresults_id: Optional[str] = sheet_field(
+        key="statsresults_id", sheet="StatsResultsMeta")
     statsresults_name: Optional[str] = sheet_field(
         key="statsresults_name", sheet="StatsResultsMeta")
     stats_description: Optional[str] = sheet_field(
@@ -349,5 +380,21 @@ class ParsedStatsResultsMeta:
         key="ESadjPval", sheet="StatsResultsMeta")
     effect_size_2: Optional[str] = sheet_field(
         key="ES2", sheet="StatsResultsMeta")
+    effect_size_prefix: Optional[str] = sheet_field(
+        key="ES_1_prefix", sheet="StatsResultsMeta")
+    effect_size_pval_prefix: Optional[str] = sheet_field(
+        key="ES_1_Pval_prefix", sheet="StatsResultsMeta")
+    effect_size_adj_pval_prefix: Optional[str] = sheet_field(
+        key="ES_1_adjPval_prefix", sheet="StatsResultsMeta")
+    effect_size_2_prefix: Optional[str] = sheet_field(
+        key="ES_2_prefix", sheet="StatsResultsMeta")
+    effect_size_2_pval: Optional[str] = sheet_field(
+        key="ES_2_Pval", sheet="StatsResultsMeta")
+    effect_size_2_pval_prefix: Optional[str] = sheet_field(
+        key="ES_2_Pval_prefix", sheet="StatsResultsMeta")
+    effect_size_2_adj_pval: Optional[str] = sheet_field(
+        key="ES_2_adjPval", sheet="StatsResultsMeta")
+    effect_size_2_adj_pval_prefix: Optional[str] = sheet_field(
+        key="ES_2_adjPval_prefix", sheet="StatsResultsMeta")
     data_analysis_code_link: Optional[str] = sheet_field(
         key="DataAnalysisCode_Link", sheet="StatsResultsMeta")

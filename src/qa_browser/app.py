@@ -80,6 +80,7 @@ from src.shared.metabolite_mass_validation import (
     mw_review_evidence_snapshot,
 )
 from src.qa_browser.build_provenance import extract_build_inputs
+from src.qa_browser.pounce_api_limits import PounceJsonSizeLimit
 from src.qa_browser.harmonization_stage_maintenance import (
     delete_one_orphan_stage,
     delete_stage_artifacts,
@@ -144,6 +145,7 @@ PATHWAY_APP_GRAPH_BUNDLED_DIR = BASE_DIR / "data" / "pathway_app_graph"
 
 
 app = FastAPI(title="QA Browser")
+app.add_middleware(PounceJsonSizeLimit)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 app.mount(
     "/ramp-id-qa/about",
@@ -422,7 +424,7 @@ def _redirect_to(path: str, *, request: Optional[Request] = None, status_code: i
 
 
 def _is_hidden_qa_browser_collection(collection_name: str) -> bool:
-    return collection_name.startswith("_")
+    return collection_name.startswith("_") or collection_name == "build_diagnostics"
 
 
 def _is_qa_visible_edge_collection(collection_name: str) -> bool:
@@ -8977,6 +8979,52 @@ def _format_elapsed(started_at: Optional[str], finished_at: Optional[str] = None
     return _format_duration_seconds(max((end_dt - start_dt).total_seconds(), 0))
 
 
+def _summarize_attempts(attempts: list[dict], now: datetime | None = None) -> dict | None:
+    if not attempts:
+        return None
+    now = now or datetime.utcnow()
+    parsed = []
+    active_seconds = 0.0
+    pause_seconds = 0.0
+    incomplete = False
+    previous_end = None
+    for attempt in attempts:
+        start = _parse_iso_datetime(attempt.get("started_at"))
+        end = _parse_iso_datetime(attempt.get("ended_at"))
+        status = attempt.get("status")
+        if start is None:
+            incomplete = True
+            continue
+        if previous_end is not None:
+            pause_seconds += max((start - previous_end).total_seconds(), 0)
+        if status == "running":
+            elapsed = max((now - start).total_seconds(), 0)
+        elif end is not None:
+            elapsed = attempt.get("elapsed_seconds")
+            if elapsed is None:
+                elapsed = max((end - start).total_seconds(), 0)
+        else:
+            elapsed = None
+            incomplete = True
+        if elapsed is not None:
+            active_seconds += max(float(elapsed), 0)
+        parsed.append({**attempt, "elapsed": _format_duration_seconds(elapsed), "started_at": attempt.get("started_at"),
+                       "ended_at": attempt.get("ended_at")})
+        previous_end = end
+    first_start = _parse_iso_datetime(attempts[0].get("started_at"))
+    last_end = _parse_iso_datetime(attempts[-1].get("ended_at"))
+    effective_end = now if attempts[-1].get("status") == "running" else last_end
+    total_seconds = max((effective_end - first_start).total_seconds(), 0) if first_start and effective_end else None
+    return {
+        "attempts": parsed, "count": len(attempts), "started_at": attempts[0].get("started_at"),
+        "ended_at": attempts[-1].get("ended_at"), "incomplete": incomplete,
+        "active": "" if incomplete else _format_duration_seconds(active_seconds),
+        "paused": "" if incomplete else _format_duration_seconds(pause_seconds),
+        "total": "" if incomplete else _format_duration_seconds(total_seconds),
+        "running": attempts[-1].get("status") == "running",
+    }
+
+
 def _summarize_checkpoint(checkpoint: dict) -> dict:
     adapters = checkpoint.get("adapters") or {}
     rows = []
@@ -9051,6 +9099,7 @@ def _summarize_checkpoint(checkpoint: dict) -> dict:
         "known_total": total,
         "seen_total": len(rows),
         "total_records": total_records,
+        "timing": _summarize_attempts(checkpoint.get("attempts") or []),
         "is_active": running > 0,
         "status": (
             "failed" if failed > 0 else
@@ -9096,6 +9145,8 @@ def _get_build_status(db) -> Optional[dict]:
     latest_run = run_summaries[0]
     any_failed = latest_run["failed"] > 0
     any_running = latest_run["running"] > 0
+    latest_attempt = (latest_checkpoint.get("attempts") or [{}])[-1]
+    attempt_status = latest_attempt.get("status")
     any_partial = latest_run["completed"] > 0
     metadata_is_current = bool(
         etl_run_dt
@@ -9103,12 +9154,18 @@ def _get_build_status(db) -> Optional[dict]:
         and (etl_meta or {}).get("source_yaml") == latest_checkpoint.get("run_id")
     )
 
-    if any_failed:
+    if attempt_status == "running":
+        overall_status = "running"
+        overall_message = "The build is still running."
+        latest_run["status"] = "running"
+    elif attempt_status == "failed" or any_failed:
         overall_status = "failed"
-        overall_message = "One or more ETL runs have failed adapters."
+        overall_message = "The build attempt failed. See the attempt and adapter details below."
+        latest_run["status"] = "failed"
     elif any_running:
         overall_status = "running"
-        overall_message = "One or more ETL runs are still running."
+        overall_message = "The build is still running."
+        latest_run["status"] = "running"
     elif metadata_is_current:
         overall_status = "completed"
         overall_message = "ETL and post-processing completed."
@@ -9134,9 +9191,57 @@ def _get_build_status(db) -> Optional[dict]:
         "known_total": latest_run["known_total"],
         "seen_total": latest_run["seen_total"],
         "total_records": latest_run["total_records"],
-        "is_active": any_running,
+        "timing": latest_run["timing"],
+        "is_active": attempt_status == "running" or any_running,
         "overall_status": overall_status,
         "overall_message": overall_message,
+    }
+
+
+def _get_build_diagnostics(db, run_id: str | None, kind: str = "", adapter: str = "",
+                           node_type: str = "", endpoint_role: str = "", after: str = "") -> dict:
+    if not db.has_collection("build_diagnostics") or not run_id:
+        return {"available": False, "run_id": run_id, "rows": []}
+    status_doc = None
+    if db.has_collection("metadata_store"):
+        cursor = db.aql.execute(
+            "FOR d IN metadata_store FILTER d.type == 'build_diagnostics_status' AND d.run_id == @run_id RETURN d",
+            bind_vars={"run_id": run_id},
+        )
+        status_doc = next(iter(cursor), None)
+    if not status_doc:
+        return {"available": False, "run_id": run_id, "rows": []}
+    bind_vars = {
+        "run_id": run_id, "kind": kind, "adapter": adapter, "node_type": node_type,
+        "endpoint_role": endpoint_role, "after": after,
+    }
+    summary = list(db.aql.execute("""
+        FOR d IN build_diagnostics
+            FILTER d.run_id == @run_id
+            COLLECT kind = d.kind, status = d.status WITH COUNT INTO count
+            RETURN {kind, status, count}
+    """, bind_vars={"run_id": run_id}))
+    rows = list(db.aql.execute("""
+        FOR d IN build_diagnostics
+            FILTER d.run_id == @run_id
+                AND (@kind == '' OR d.kind == @kind)
+                AND (@adapter == '' OR d.adapter == @adapter)
+                AND (@node_type == '' OR d.node_type == @node_type)
+                AND (@endpoint_role == '' OR d.endpoint_role == @endpoint_role)
+                AND (@after == '' OR d._key > @after)
+            SORT d._key
+            LIMIT 101
+            RETURN d
+    """, bind_vars=bind_vars))
+    has_next = len(rows) > 100
+    rows = rows[:100]
+    next_query = ""
+    if has_next:
+        next_query = urlencode({**bind_vars, "after": rows[-1]["_key"]})
+    return {
+        "available": True, "run_id": run_id, "status": status_doc.get("status", "partial"),
+        "updated_at": status_doc.get("updated_at"), "summary": summary, "rows": rows,
+        "next_query": next_query,
     }
 
 
@@ -10477,6 +10582,21 @@ async def build_status_page(request: Request, db_name: str):
         "request": request,
         "db_name": db_name,
         "build_status": build_status,
+    })
+
+
+@app.get("/db/{db_name}/build-diagnostics", response_class=HTMLResponse)
+async def build_diagnostics_page(request: Request, db_name: str, run_id: str = "", kind: str = "",
+                                 adapter: str = "", node_type: str = "", endpoint_role: str = "",
+                                 after: str = ""):
+    db = get_db(db_name)
+    build_status = _get_build_status(db)
+    selected_run_id = run_id or ((build_status or {}).get("run_id") or "")
+    diagnostics = _get_build_diagnostics(db, selected_run_id, kind, adapter, node_type, endpoint_role, after)
+    return templates.TemplateResponse(request, "build_diagnostics.html", {
+        "request": request, "db_name": db_name, "diagnostics": diagnostics,
+        "build_status": build_status, "kind": kind, "adapter": adapter,
+        "node_type": node_type, "endpoint_role": endpoint_role,
     })
 
 

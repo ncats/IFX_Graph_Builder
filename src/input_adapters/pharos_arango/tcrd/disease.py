@@ -20,6 +20,8 @@ def associated_disease_ids_query(collection_name: str) -> str:
 
 
 def disease_parent_query() -> str:
+    # Current graphs use this collection for the DISEASES projection. Legacy
+    # graphs used the same name for raw MONDO edges; SQL ignores either type.
     return """FOR rel IN `DiseaseParentEdge`
     RETURN { "start": rel.start_id, "end": rel.end_id }
     """

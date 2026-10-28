@@ -13,6 +13,7 @@ class DataSourceName(SimpleEnum):
     NCATSPounce = "NCATSPounce"
     TargetGraph = "Pharos 4.0 CSV"
     TargetHarmonizer = "IFX Harmonizers TARGETS"
+    DiseaseHarmonizer = "IFX Harmonizers DISEASES"
     TargetGraphNCBI = "Pharos 4.0 CSV (NCBI)"
     ChEMBL = "ChEMBL"
     CCLE = "Cancer Cell Line Encyclopedia (CCLE)"
@@ -73,6 +74,7 @@ class DataSourceName(SimpleEnum):
     RHEA = "RHEA"
 
 class Prefix(SimpleEnum):
+    IFXDisease = 'IFXDisease'
     CAS = 'CAS'                         	# from TNN
     CHEBI = 'CHEBI'                     	# from TNN
     CHEMBL_COMPOUND = 'CHEMBL.COMPOUND'  	# from TNN

@@ -32,6 +32,8 @@ class ParsedPounceData:
     project: Optional[ParsedProject] = None
     people: List[ParsedPerson] = field(default_factory=list)
     param_maps: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    workbook_versions: Dict[str, int] = field(default_factory=dict)
+    original_sheets: Dict[str, Dict[str, str]] = field(default_factory=dict)
     biosamples: List[ParsedBiosample] = field(default_factory=list)
     biospecimens: List[ParsedBiospecimen] = field(default_factory=list)
     demographics: List[ParsedDemographics] = field(default_factory=list)
