@@ -13,7 +13,7 @@ from src.models.node import Node, Relationship
 
 class PounceInputAdapter(InputAdapter):
     def __init__(self, project_file: str, experiment_files: List[str] = None,
-                 stats_results_files: List[str] = None, validators_config: str = None):
+                 stats_results_files: List[str | None] = None, validators_config: str = None):
         self.project_file = project_file
         self.experiment_files = experiment_files or []
         self.stats_results_files = stats_results_files or []

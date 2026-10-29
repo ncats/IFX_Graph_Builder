@@ -13,13 +13,13 @@ if __name__ == "__main__":
     # )
 
     run_arango_build_cli(
-        build_name="DISEASES 2.3.1 gene-resolved comparison",
-        primary_yaml="src/use_cases/working_diseases_230.yaml",
+        build_name="DISEASES 2.3.3 gene-resolved comparison",
+        primary_yaml="src/use_cases/working_diseases_233.yaml",
     )
 
     run_arango_build_cli(
-        build_name="DISEASES 2.3.1 Pharos contract comparison",
-        primary_yaml="src/use_cases/working_diseases_231_pharos_contract.yaml",
+        build_name="DISEASES 2.3.3 Pharos contract comparison",
+        primary_yaml="src/use_cases/working_diseases_233_pharos_contract.yaml",
     )
 
     # run_arango_build_cli(

@@ -1,11 +1,12 @@
 import pandas as pd
+import pytest
 from unittest.mock import patch, MagicMock
 from datetime import datetime
 
 from src.input_adapters.pounce_sheets.parsed_classes import ParsedPerson, ParsedBiosample, ParsedBiospecimen, ParsedExperiment, ParsedRunBiosample, ParsedProject
 from src.input_adapters.pounce_sheets.parsed_pounce_data import ParsedPounceData
 from src.input_adapters.pounce_sheets.pounce_input_adapter import PounceInputAdapter
-from src.input_adapters.pounce_sheets.pounce_node_builder import PounceNodeBuilder
+from src.input_adapters.pounce_sheets.pounce_node_builder import PounceNodeBuilder, _iter_pairs
 from src.input_adapters.excel_sheet_adapter import ExcelsheetParser
 from src.models.pounce.project import Project, AccessLevel
 from src.models.pounce.experiment import Experiment, ExperimentBiospecimenEdge, RunBiosample
@@ -13,6 +14,35 @@ from src.models.protein import MeasuredProtein
 from src.models.pounce.dataset import Dataset, DatasetProteinEdge
 from src.models.pounce.workbook_artifact import WorkbookArtifact
 from src.constants import DataSourceName
+
+
+def test_experiment_stats_pairing_keeps_missing_middle_slot():
+    assert list(_iter_pairs(["exp1", "exp2", "exp3"], ["stats1", None, "stats3"])) == [
+        ("exp1", "stats1"), ("exp2", None), ("exp3", "stats3"),
+    ]
+    with pytest.raises(ValueError, match="use None"):
+        list(_iter_pairs(["exp1", "exp2"], ["stats2"]))
+
+
+def test_missing_stats_experiment_does_not_require_its_analyte_in_other_stats_map():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "input_files/manual/pounce/OLD/templates"
+    adapter = PounceInputAdapter(
+        project_file=str(root / "POUNCE_Project_Metabo_Template_v2.xlsx"),
+        experiment_files=[
+            str(root / "POUNCE_Experiment_Metabo_Template_v2.xlsx"),
+            str(root / "POUNCE_Experiment_Proteomics_Template_v2.xlsx"),
+        ],
+        stats_results_files=[None, str(root / "POUNCE_StatsResults_Proteomics_Template_v2.xlsx")],
+        validators_config="src/use_cases/pounce/pounce_validators.yaml",
+    )
+    data = adapter.get_validation_data()
+    content_issues = [issue for validator in adapter.get_validators() for issue in validator.validate(data)]
+    assert not any(
+        issue.sheet == "EffectSize_Map" and issue.field == "metabolite_id"
+        for issue in content_issues
+    )
 
 
 def create_mock_parser(project_data: dict, biosample_map_data: dict = None, biosample_meta_df: pd.DataFrame = None):

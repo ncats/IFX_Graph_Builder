@@ -16,6 +16,7 @@ ASSERTION_MEMBER = "app_graph/disease_gene_source_assertions.tsv"
 SUMMARY_COLUMNS = {
     "ncats_disease_id", "ncats_gene_id", "support_tier", "support_score_raw",
     "association_ids", "n_supporting_sources", "n_independent_origins",
+    "evidence_origins",
 }
 ASSERTION_COLUMNS = {
     "association_id", "ncats_disease_id", "association_source", "negated",
@@ -41,10 +42,11 @@ def _rows(path, required):
 class DiseaseConsumerAssociationAdapter(InputAdapter):
     """Emit one gene-disease edge per published support pair."""
 
-    def __init__(self, data_source):
+    def __init__(self, data_source, emit_gene_nodes: bool = False):
         self.summary_path, _ = validated_disease_snapshot_file(data_source, SUMMARY_MEMBER)
         self.assertion_path, _ = validated_disease_snapshot_file(data_source, ASSERTION_MEMBER)
         self.version_info = data_source.version_info()
+        self.emit_gene_nodes = emit_gene_nodes
 
     def get_datasource_name(self):
         return DataSourceName.DiseaseHarmonizer
@@ -105,6 +107,17 @@ class DiseaseConsumerAssociationAdapter(InputAdapter):
         if not assertions:
             raise ValueError(f"{self.assertion_path} has no assertions")
 
+        if self.emit_gene_nodes:
+            gene_ids = set()
+            for _row_number, row in _rows(self.summary_path, SUMMARY_COLUMNS):
+                gene_id = row["ncats_gene_id"]
+                if not gene_id.startswith("IFXGene:"):
+                    raise ValueError(f"{self.summary_path} has invalid gene endpoint {gene_id!r}")
+                gene_ids.add(gene_id)
+            ordered_gene_ids = sorted(gene_ids)
+            for offset in range(0, len(ordered_gene_ids), self.batch_size):
+                yield [Gene(id=value) for value in ordered_gene_ids[offset:offset + self.batch_size]]
+
         batch = []
         seen_pairs = set()
         for row_number, row in _rows(self.summary_path, SUMMARY_COLUMNS):
@@ -140,6 +153,12 @@ class DiseaseConsumerAssociationAdapter(InputAdapter):
                 disease_harmonizer_support={
                     key: value for key, value in row.items() if key != "association_ids"
                 },
+                gene_assessments=[{
+                    "gene_id": gene_id,
+                    "tier": row["support_tier"],
+                    "score": row["support_score_raw"],
+                    "origins": [value for value in row["evidence_origins"].split("|") if value],
+                }],
             ))
             if len(batch) >= self.batch_size:
                 yield batch

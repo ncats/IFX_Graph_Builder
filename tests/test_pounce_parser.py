@@ -407,6 +407,27 @@ class TestParseProject:
         data, _ = PounceParser().parse_project(parser)
         assert data.project.lab_groups == ["Lab A", "Lab B"]
 
+    def test_tmb_and_3d_tissue_allowed_without_disease_mapping(self):
+        from src.models.pounce.project import LabGroup
+
+        parser = _make_project_parser(
+            {"lab_groups": ["TMB"]},
+            {key: value for key, value in BASIC_BIOSAMPLE_MAP.items() if key != "disease_names"},
+            [{"SampleID": "s1", "SampleType": "sample", "SpecimenID": "b1",
+              "SpecimenType": "3D tissue", "Desc": "", "Organism": "human"}],
+        )
+        data, _ = PounceParser().parse_project(parser)
+        validators = load_validators("src/use_cases/pounce/pounce_validators.yaml")
+        assert data.biospecimens[0].biospecimen_type == "3D tissue"
+        assert data.biospecimens[0].disease_names is None
+        assert LabGroup.parse("TMB") is LabGroup.TMB
+        assert not any(
+            validator.validate(data)
+            for validator in validators
+            if (validator.sheet == "ProjectMeta" and validator.field == "lab_groups")
+            or (validator.sheet == "BioSampleMap" and validator.field == "disease_names")
+        )
+
     def test_parses_project_type(self):
         parser = _make_project_parser({"project_type": ["Transcriptomics"]})
         data, _ = PounceParser().parse_project(parser)
@@ -631,6 +652,35 @@ class TestParseExperiment:
         data, _ = PounceParser().parse_experiment(parser)
         assert data.experiments[0].experiment_type == "Transcriptomics"
 
+    def test_v3_platform_type_without_experiment_type_is_accepted(self):
+        from src.core.validator import RequiredValidator
+        from src.models.pounce.experiment import PlatformType
+
+        parser = _make_experiment_parser({"platform_type": "sc_rnaseq"})
+        parser.pounce_version = 3
+        data, issues = PounceParser().parse_experiment(parser)
+        validators = load_validators("src/use_cases/pounce/pounce_validators.yaml")
+        assert data.experiments[0].experiment_type is None
+        assert not any(issue.field == "experiment_type" for issue in issues)
+        assert PlatformType.parse("sc_rnaseq") is PlatformType.SC_RNASEQ
+        assert not any(
+            isinstance(validator, RequiredValidator)
+            and validator.sheet == "ExperimentMeta"
+            and validator.field == "experiment_type"
+            for validator in validators
+        )
+        assert not any(
+            validator.validate(data)
+            for validator in validators
+            if validator.sheet == "ExperimentMeta" and validator.field == "platform_type"
+        )
+
+    def test_v2_still_requires_experiment_type(self):
+        parser = _make_experiment_parser({"platform_type": "bulk_rnaseq"})
+        parser.pounce_version = 2
+        _, issues = PounceParser().parse_experiment(parser)
+        assert any(issue.field == "experiment_type" and issue.severity == "error" for issue in issues)
+
     def test_parses_platform_fields(self):
         parser = _make_experiment_parser({
             "platform_type": "RNA-seq",
@@ -837,6 +887,10 @@ class TestCheckMappedColumns:
 
 
 class TestParseAll:
+
+    def test_partial_stats_list_requires_explicit_missing_slot(self):
+        with pytest.raises(ValueError, match="use None"):
+            PounceParser().parse_all("project.xlsx", ["exp1.xlsx", "exp2.xlsx"], ["stats2.xlsx"])
 
     def test_parse_all_no_experiment_or_stats_files(self, tmp_path, monkeypatch):
         """parse_all with empty experiment/stats lists delegates to parse_project."""

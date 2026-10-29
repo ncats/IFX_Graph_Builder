@@ -70,6 +70,10 @@ class InputAdapter(ABC):
             if key in {"start_node", "end_node"}:
                 continue
             setattr(remapped, key, value if already_copied else copy.deepcopy(value))
+        if isinstance(rel, GeneDiseaseEdge) and target_cls is ProteinDiseaseEdge:
+            # A scalar gene-pair assessment cannot represent multiple genes
+            # after their edges merge on one protein-disease pair.
+            remapped.disease_harmonizer_support = None
         return remapped
 
     def get_name(self) -> str:

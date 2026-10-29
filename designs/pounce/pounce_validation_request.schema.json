@@ -95,7 +95,14 @@
     },
     "stats_results": {
       "items": {
-        "$ref": "#/$defs/WorkbookTables"
+        "anyOf": [
+          {
+            "$ref": "#/$defs/WorkbookTables"
+          },
+          {
+            "type": "null"
+          }
+        ]
       },
       "title": "Stats Results",
       "type": "array"

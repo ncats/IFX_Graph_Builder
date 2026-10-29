@@ -342,6 +342,12 @@ class PounceParser:
         # --- ExperimentMeta (meta sheet) ---
         issues.extend(self._check_unknown_keys(parser, "ExperimentMeta", "ExperimentMeta"))
         data.experiments.append(self.parse_meta_sheet(parser, ParsedExperiment))
+        if getattr(parser, "pounce_version", None) == 2 and not data.experiments[0].experiment_type:
+            issues.append(ValidationError(
+                severity="error", entity="experiments", field="experiment_type",
+                sheet="ExperimentMeta", column="experiment_type", source_file=parser.file_path,
+                message="Sheet ExperimentMeta is missing required field: experiment_type",
+            ))
 
         # --- RunBioSampleMeta via RunBioSampleMap (mapped sheet) ---
         if "RunBioSampleMap" in parser.sheet_dfs:
@@ -596,16 +602,37 @@ class PounceParser:
 
         return data, issues
 
+    @staticmethod
+    def _expected_analyte(sheet_names: Set[str], platform_type: Optional[str]) -> Optional[str]:
+        for map_sheet, family in (
+            ("GeneMap", "gene"), ("ProteinMap", "protein"), ("MetabMap", "metabolite")
+        ):
+            if map_sheet in sheet_names:
+                return family
+        platform_families = {
+            "bulk_rnaseq": "gene", "sc_rnaseq": "gene", "atac_seq": "gene",
+            "rasl_seq": "gene", "qpcr": "gene", "chip_seq": "gene",
+            "metabolomics": "metabolite", "lipidomics": "metabolite",
+            "proteomics": "protein",
+        }
+        return platform_families.get(platform_type)
+
     def parse_all(self, project_file: str,
                   experiment_files: List[str] = None,
-                  stats_files: List[str] = None,
+                  stats_files: List[Optional[str]] = None,
                   workbook_loader=None):
         """Parse all workbooks into a single :class:`ParsedPounceData`.
 
         Returns ``(ParsedPounceData, List[ValidationError])``.
         """
         experiment_files = experiment_files or []
-        stats_files = stats_files or []
+        stats_files = list(stats_files or [])
+        if stats_files and len(stats_files) != len(experiment_files):
+            raise ValueError(
+                "StatsResults workbook slots must match experiment count; use None for an experiment without stats"
+            )
+        if not stats_files:
+            stats_files = [None] * len(experiment_files)
         workbook_loader = workbook_loader or load_pounce_workbook
 
         project_workbook = workbook_loader(project_file, "project")
@@ -637,7 +664,7 @@ class PounceParser:
 
             # Process the paired stats file (if any) immediately after its experiment
             # so we can pass the experiment's gene/metabolite ID sets for cross-referencing.
-            if i < len(stats_files):
+            if stats_files[i] is not None:
                 valid_gene_ids = {str(g.gene_id).strip() for g in exp_data.genes if g.gene_id} or None
                 valid_metab_ids = {str(m.metab_id).strip() for m in exp_data.metabolites if m.metab_id} or None
                 valid_protein_ids = {str(p.protein_id).strip() for p in exp_data.proteins if p.protein_id} or None
@@ -650,10 +677,9 @@ class PounceParser:
                     valid_metab_ids=valid_metab_ids,
                     valid_protein_ids=valid_protein_ids,
                     valid_run_biosample_ids=valid_run_biosample_ids,
-                    expected_analyte=(
-                        "gene" if "GeneMap" in exp_workbook.parser.sheet_dfs else
-                        "protein" if "ProteinMap" in exp_workbook.parser.sheet_dfs else
-                        "metabolite" if "MetabMap" in exp_workbook.parser.sheet_dfs else None
+                    expected_analyte=self._expected_analyte(
+                        set(exp_workbook.parser.sheet_dfs),
+                        exp_data.experiments[0].platform_type if exp_data.experiments else None,
                     ),
                 )
                 combined.stats_results.extend(stats_data.stats_results)
@@ -662,19 +688,6 @@ class PounceParser:
                 combined.original_sheets[stats_files[i]] = stats_workbook.original_sheets
                 _restore_issue_sheets(stats_issues, stats_workbook)
                 issues.extend(stats_issues)
-
-        # Any stats files beyond the number of experiment files (unusual) get
-        # parsed without ID cross-reference checks.
-        for stats_file in stats_files[len(experiment_files):]:
-            stats_workbook = workbook_loader(stats_file, "stats")
-            stats_parser = stats_workbook.parser
-            stats_data, stats_issues = self.parse_stats_results(stats_parser)
-            combined.stats_results.extend(stats_data.stats_results)
-            combined.param_maps.update(stats_data.param_maps)
-            combined.workbook_versions[stats_file] = stats_workbook.version
-            combined.original_sheets[stats_file] = stats_workbook.original_sheets
-            _restore_issue_sheets(stats_issues, stats_workbook)
-            issues.extend(stats_issues)
 
         return combined, issues
 

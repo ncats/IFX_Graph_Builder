@@ -31,7 +31,8 @@ pounce_configs = [
 ]
 
 
-def _assign_content_issue_source_files(all_issues, project_file: str, experiment_files: list[str], stats_files: list[str]) -> None:
+def _assign_content_issue_source_files(all_issues, project_file: str, experiment_files: list[str], stats_files: list[str | None]) -> None:
+    present_stats_files = [path for path in stats_files if path is not None]
     for issue in all_issues:
         if issue.source_file:
             continue
@@ -44,22 +45,23 @@ def _assign_content_issue_source_files(all_issues, project_file: str, experiment
             issue.source_file = experiment_files[issue.row]
             continue
 
-        if issue.entity == "stats_results" and issue.row is not None and 0 <= issue.row < len(stats_files):
-            issue.source_file = stats_files[issue.row]
+        if issue.entity == "stats_results" and issue.row is not None and 0 <= issue.row < len(present_stats_files):
+            issue.source_file = present_stats_files[issue.row]
             continue
 
         if issue.sheet in _PROJECT_REQUIRED_SHEETS:
             issue.source_file = project_file
         elif issue.sheet in _EXPERIMENT_RECOGNIZED_SHEETS and len(experiment_files) == 1:
             issue.source_file = experiment_files[0]
-        elif issue.sheet in _STATS_RECOGNIZED_SHEETS and len(stats_files) == 1:
-            issue.source_file = stats_files[0]
+        elif issue.sheet in _STATS_RECOGNIZED_SHEETS and len(present_stats_files) == 1:
+            issue.source_file = present_stats_files[0]
 
 for chosen in pounce_configs:
     kwargs = chosen.get("kwargs", {})
     project_file = kwargs.get("project_file", "")
     experiment_files = kwargs.get("experiment_files") or []
     stats_files = kwargs.get("stats_results_files") or []
+    present_stats_files = [path for path in stats_files if path is not None]
 
     print(f"\n{'='*60}")
     print(f"Validating: {os.path.basename(project_file)}")
@@ -97,9 +99,9 @@ for chosen in pounce_configs:
                 return os.path.basename(experiment_files[0])
             return "Experiment workbook(s): " + ", ".join(os.path.basename(f) for f in experiment_files)
         if issue_sheet in _STATS_RECOGNIZED_SHEETS:
-            if len(stats_files) == 1:
-                return os.path.basename(stats_files[0])
-            return "Stats results workbook(s): " + ", ".join(os.path.basename(f) for f in stats_files)
+            if len(present_stats_files) == 1:
+                return os.path.basename(present_stats_files[0])
+            return "Stats results workbook(s): " + ", ".join(os.path.basename(f) for f in present_stats_files)
         return "(unknown workbook)"
 
     if all_issues:

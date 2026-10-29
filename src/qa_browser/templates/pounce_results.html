@@ -100,6 +100,18 @@
 </div>
 {% endif %}
 
+{% if file_pairs %}
+<div class="card" style="margin-bottom: 1.25rem;">
+    <div style="font-size: 12px; font-weight: 700; color: var(--text-muted); margin-bottom: 0.5rem;">Experiment workbooks</div>
+    {% for number, experiment_filename, stats_filename in file_pairs %}
+    <div style="font-size: 13px; padding: 0.3rem 0; overflow-wrap: anywhere;">
+        <strong>Experiment {{ number }}:</strong> {{ experiment_filename }}
+        <span style="color: var(--text-muted);">· StatsResults: {{ stats_filename or "No StatsResults workbook" }}</span>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
 {# ── Summary counts ──────────────────────────────────────────────────────── #}
 {% if parsed_data %}
 <div class="stats-row">

@@ -18,10 +18,8 @@ from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
-from typing import List
-
 import pandas as pd
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from sqlalchemy import text
 
@@ -190,10 +188,33 @@ def _is_real_upload(upload: UploadFile | None) -> bool:
     return bool(upload and getattr(upload, "filename", ""))
 
 
+def _upload_slots(form, field_name: str) -> list[UploadFile | None]:
+    """Preserve blank browser file inputs so experiment rows stay aligned."""
+    slots = []
+    for value in form.getlist(field_name):
+        if _is_real_upload(value):
+            slots.append(value)
+        elif value == "" or getattr(value, "filename", None) == "":
+            slots.append(None)
+        else:
+            raise ValueError(f"{field_name} must contain workbook uploads")
+    return slots
+
+
+def _aligned_optional_uploads(uploads, experiment_count, field_name):
+    if not uploads:
+        return [None] * experiment_count
+    if len(uploads) != experiment_count:
+        raise ValueError(
+            f"{field_name} must contain one slot per experiment, including empty slots"
+        )
+    return uploads
+
+
 def _build_session(
     project_path: str,
     exp_paths: list[str],
-    stats_paths: list[str],
+    stats_paths: list[str | None],
     parsed_data=None,
     submission_label: str = "POUNCE submission",
     file_change_summary: dict | None = None,
@@ -212,11 +233,11 @@ def _build_session(
         "project_path": project_path,
         "exp_paths": exp_paths,
         "stats_paths": stats_paths,
-        "file_paths": [project_path] + exp_paths + stats_paths,
+        "file_paths": [project_path] + exp_paths + [path for path in stats_paths if path is not None],
         "file_basenames": (
             [os.path.basename(project_path)]
             + [os.path.basename(p) for p in exp_paths]
-            + [os.path.basename(p) for p in stats_paths]
+            + [os.path.basename(p) for p in stats_paths if p is not None]
         ),
         "summary": None,
         "submission_label": submission_label,
@@ -227,9 +248,9 @@ def _build_session(
     return session_id, session
 
 
-def _summarize_new_submission(project_path: str, exp_paths: list[str], stats_paths: list[str]) -> dict:
+def _summarize_new_submission(project_path: str, exp_paths: list[str], stats_paths: list[str | None]) -> dict:
     return {
-        "added": [os.path.basename(project_path)] + [os.path.basename(p) for p in exp_paths] + [os.path.basename(p) for p in stats_paths],
+        "added": [os.path.basename(project_path)] + [os.path.basename(p) for p in exp_paths] + [os.path.basename(p) for p in stats_paths if p is not None],
         "replaced": [],
         "unchanged": [],
     }
@@ -237,13 +258,15 @@ def _summarize_new_submission(project_path: str, exp_paths: list[str], stats_pat
 
 def _summarize_edit_submission(
     prior_session: dict,
-    project_file: UploadFile,
-    experiment_files: list[UploadFile],
-    stats_files: list[UploadFile],
-    new_experiment_files: list[UploadFile],
-    new_stats_files: list[UploadFile],
+    project_file: UploadFile | None,
+    experiment_files: list[UploadFile | None],
+    stats_files: list[UploadFile | None],
+    new_experiment_files: list[UploadFile | None],
+    new_stats_files: list[UploadFile | None],
+    remove_stats: set[int] | None = None,
 ) -> dict:
-    summary = {"added": [], "replaced": [], "unchanged": []}
+    summary = {"added": [], "replaced": [], "removed": [], "unchanged": []}
+    remove_stats = remove_stats or set()
 
     current_project_name = os.path.basename(prior_session["project_path"])
     if _is_real_upload(project_file):
@@ -251,19 +274,27 @@ def _summarize_edit_submission(
     else:
         summary["unchanged"].append(current_project_name)
 
-    for existing_path, upload in zip(prior_session["exp_paths"], experiment_files):
+    for i, existing_path in enumerate(prior_session["exp_paths"]):
+        upload = experiment_files[i] if i < len(experiment_files) else None
         existing_name = os.path.basename(existing_path)
         if _is_real_upload(upload):
             summary["replaced"].append(f"{existing_name} -> {Path(upload.filename).name}")
         else:
             summary["unchanged"].append(existing_name)
 
-    for existing_path, upload in zip(prior_session["stats_paths"], stats_files):
-        existing_name = os.path.basename(existing_path)
-        if _is_real_upload(upload):
-            summary["replaced"].append(f"{existing_name} -> {Path(upload.filename).name}")
-        else:
-            summary["unchanged"].append(existing_name)
+    for i, existing_path in enumerate(prior_session["stats_paths"]):
+        upload = stats_files[i] if i < len(stats_files) else None
+        if i in remove_stats:
+            if existing_path:
+                summary["removed"].append(os.path.basename(existing_path))
+        elif _is_real_upload(upload):
+            name = Path(upload.filename).name
+            if existing_path:
+                summary["replaced"].append(f"{os.path.basename(existing_path)} -> {name}")
+            else:
+                summary["added"].append(name)
+        elif existing_path:
+            summary["unchanged"].append(os.path.basename(existing_path))
 
     pair_count = max(len(new_experiment_files), len(new_stats_files))
     for i in range(pair_count):
@@ -417,19 +448,29 @@ def _create_existing_project_session(project_id: str) -> str:
 
         project_path = _write_blob_file(project_row["original_filename"], project_row["content_blob"], tmp)
         exp_paths: list[str] = []
-        stats_paths: list[str] = []
+        stats_paths: list[str | None] = []
+        seen_experiments: set[str] = set()
 
         for i, row in enumerate(pair_rows):
+            if row["experiment_id"] in seen_experiments:
+                raise RuntimeError(
+                    f"Experiment '{row['experiment_id']}' has multiple StatsResults records; "
+                    "the editor supports at most one per experiment."
+                )
+            seen_experiments.add(row["experiment_id"])
             if not row["experiment_filename"] or row["experiment_blob"] is None:
                 raise RuntimeError(
                     f"Experiment '{row['experiment_id']}' does not have a stored workbook in {_MYSQL_DB_NAME}."
                 )
-            if not row["stats_result_id"] or not row["stats_filename"] or row["stats_blob"] is None:
-                raise RuntimeError(
-                    f"Experiment '{row['experiment_id']}' is missing its stored stats workbook in {_MYSQL_DB_NAME}."
-                )
             exp_paths.append(_write_blob_file(row["experiment_filename"], row["experiment_blob"], tmp, prefix=f"exp{i}_"))
-            stats_paths.append(_write_blob_file(row["stats_filename"], row["stats_blob"], tmp, prefix=f"stats{i}_"))
+            if row["stats_result_id"]:
+                if not row["stats_filename"] or row["stats_blob"] is None:
+                    raise RuntimeError(
+                        f"Experiment '{row['experiment_id']}' has a StatsResults record without its stored workbook."
+                    )
+                stats_paths.append(_write_blob_file(row["stats_filename"], row["stats_blob"], tmp, prefix=f"stats{i}_"))
+            else:
+                stats_paths.append(None)
 
         session_id, session = _build_session(
             project_path,
@@ -439,7 +480,7 @@ def _create_existing_project_session(project_id: str) -> str:
             file_change_summary={
                 "added": [],
                 "replaced": [],
-                "unchanged": [os.path.basename(project_path)] + [os.path.basename(p) for p in exp_paths] + [os.path.basename(p) for p in stats_paths],
+                "unchanged": [os.path.basename(project_path)] + [os.path.basename(p) for p in exp_paths] + [os.path.basename(p) for p in stats_paths if p is not None],
             },
             existing_project_id=project_id,
         )
@@ -451,11 +492,11 @@ def _create_existing_project_session(project_id: str) -> str:
 
 
 def _append_new_pairs(
-    experiment_uploads: list[UploadFile],
-    stats_uploads: list[UploadFile],
+    experiment_uploads: list[UploadFile | None],
+    stats_uploads: list[UploadFile | None],
     tmp: str,
     exp_paths: list[str],
-    stats_paths: list[str],
+    stats_paths: list[str | None],
 ) -> None:
     pair_count = max(len(experiment_uploads), len(stats_uploads))
     for i in range(pair_count):
@@ -465,12 +506,12 @@ def _append_new_pairs(
         has_stats = _is_real_upload(stats_upload)
         if not has_exp and not has_stats:
             continue
-        if has_exp != has_stats:
+        if has_stats and not has_exp:
             raise ValueError(
-                f"New experiment row {i + 1} must include both an experiment workbook and a StatsResults workbook."
+                f"New experiment row {i + 1} has a StatsResults workbook but no experiment workbook."
             )
         exp_paths.append(_save_upload(exp_upload, tmp, prefix=f"exp_new{i}_"))
-        stats_paths.append(_save_upload(stats_upload, tmp, prefix=f"stats_new{i}_"))
+        stats_paths.append(_save_upload(stats_upload, tmp, prefix=f"stats_new{i}_") if has_stats else None)
 
 
 # ── Validation helpers ────────────────────────────────────────────────────────
@@ -498,7 +539,8 @@ def _group_issues(all_issues, project_filename, exp_filenames, stats_filenames):
 
 
 def _assign_content_issue_source_files(all_issues: list[ValidationError], project_path: str,
-                                       exp_paths: list[str], stats_paths: list[str]) -> None:
+                                       exp_paths: list[str], stats_paths: list[str | None]) -> None:
+    present_stats_paths = [path for path in stats_paths if path is not None]
     for issue in all_issues:
         if issue.source_file:
             continue
@@ -511,16 +553,16 @@ def _assign_content_issue_source_files(all_issues: list[ValidationError], projec
             issue.source_file = exp_paths[issue.row]
             continue
 
-        if issue.entity == "stats_results" and issue.row is not None and 0 <= issue.row < len(stats_paths):
-            issue.source_file = stats_paths[issue.row]
+        if issue.entity == "stats_results" and issue.row is not None and 0 <= issue.row < len(present_stats_paths):
+            issue.source_file = present_stats_paths[issue.row]
             continue
 
         if issue.sheet in _PROJECT_REQUIRED_SHEETS:
             issue.source_file = project_path
         elif issue.sheet in _EXPERIMENT_RECOGNIZED_SHEETS and len(exp_paths) == 1:
             issue.source_file = exp_paths[0]
-        elif issue.sheet in _STATS_RECOGNIZED_SHEETS and len(stats_paths) == 1:
-            issue.source_file = stats_paths[0]
+        elif issue.sheet in _STATS_RECOGNIZED_SHEETS and len(present_stats_paths) == 1:
+            issue.source_file = present_stats_paths[0]
 
 
 def _restore_content_issue_sheets(issues: list[ValidationError], parsed_data) -> None:
@@ -538,10 +580,19 @@ def _file_version_rows(parsed_data, project_path: str, exp_paths: list[str], sta
     for role, paths in (("Project", [project_path]), ("Experiment", exp_paths),
                         ("Stats Results", stats_paths)):
         for path in paths:
+            if path is None:
+                continue
             version = parsed_data.workbook_versions.get(path)
             if version is not None:
                 rows.append((role, os.path.basename(path), f"v{version}"))
     return rows
+
+
+def _file_pair_rows(exp_paths: list[str], stats_paths: list[str | None]) -> list[tuple[int, str, str | None]]:
+    return [
+        (i + 1, os.path.basename(exp_path), os.path.basename(stats_paths[i]) if stats_paths[i] else None)
+        for i, exp_path in enumerate(exp_paths)
+    ]
 
 
 def _validate_parsed_submission(parsed_data, structural_issues, project_path, exp_paths, stats_paths):
@@ -555,7 +606,7 @@ def _validate_parsed_submission(parsed_data, structural_issues, project_path, ex
     grouped = _group_issues(
         issues, os.path.basename(project_path),
         [os.path.basename(path) for path in exp_paths],
-        [os.path.basename(path) for path in stats_paths],
+        [os.path.basename(path) for path in stats_paths if path is not None],
     )
     return issues, grouped
 
@@ -752,9 +803,10 @@ def validate_sheet_tables(submission: PounceValidationRequest):
     """Validate decoded v2/v3 sheet tables without creating an upload session."""
     project_id = submission.project.source_id
     exp_ids = [workbook.source_id for workbook in submission.experiments]
-    stats_ids = [workbook.source_id for workbook in submission.stats_results]
+    stats_ids = [workbook.source_id if workbook else None for workbook in submission.stats_results]
     loader = _sheet_workbook_loader(
-        [submission.project, *submission.experiments, *submission.stats_results]
+        [submission.project, *submission.experiments,
+         *(workbook for workbook in submission.stats_results if workbook is not None)]
     )
     try:
         parsed_data, structural_issues = PounceParser().parse_all(
@@ -776,7 +828,7 @@ def validate_sheet_tables(submission: PounceValidationRequest):
                 ("project", [project_id]),
                 ("experiment", exp_ids),
                 ("stats_results", stats_ids),
-            ) for source_id in source_ids
+            ) for source_id in source_ids if source_id is not None
         ],
         "error_count": sum(issue.severity == "error" for issue in issues),
         "warning_count": sum(issue.severity == "warning" for issue in issues),
@@ -840,9 +892,6 @@ async def load_existing_project(request: Request, project_id: str = Form(...)):
 @router.post("/validate", response_class=HTMLResponse)
 async def run_validation(
     request: Request,
-    project_file:     UploadFile       = File(...),
-    experiment_files: List[UploadFile] = File(...),
-    stats_files:      List[UploadFile] = File(...),
 ):
     _cleanup_old_sessions()
 
@@ -853,11 +902,28 @@ async def run_validation(
     session_id  = None
 
     tmp = tempfile.mkdtemp()
+    project_file = None
+    project_path = ""
+    exp_paths = []
+    stats_paths = []
 
     try:
+        form = await request.form()
+        projects = _upload_slots(form, "project_file")
+        experiment_files = _upload_slots(form, "experiment_files")
+        stats_files = _upload_slots(form, "stats_files")
+        if len(projects) != 1 or not _is_real_upload(projects[0]):
+            raise ValueError("A project workbook is required")
+        if not experiment_files or any(not _is_real_upload(item) for item in experiment_files):
+            raise ValueError("Each experiment row needs an experiment workbook")
+        stats_files = _aligned_optional_uploads(stats_files, len(experiment_files), "stats_files")
+        project_file = projects[0]
         project_path = _save_upload(project_file, tmp)
         exp_paths    = [_save_upload(f, tmp, prefix=f"exp{i}_")   for i, f in enumerate(experiment_files)]
-        stats_paths  = [_save_upload(f, tmp, prefix=f"stats{i}_") for i, f in enumerate(stats_files)]
+        stats_paths  = [
+            _save_upload(f, tmp, prefix=f"stats{i}_") if f else None
+            for i, f in enumerate(stats_files)
+        ]
 
         adapter = PounceInputAdapter(
             project_file=project_path,
@@ -920,7 +986,7 @@ async def run_validation(
         "errors":                 errors,
         "warnings":               warnings,
         "parse_error":            parse_error,
-        "project_filename":       project_file.filename,
+        "project_filename":       project_file.filename if project_file else "Project workbook",
         "coverage":               coverage,
         "metab_resolver_missing": metab_resolver_missing,
         "gene_resolver_missing":  gene_resolver_missing,
@@ -928,6 +994,7 @@ async def run_validation(
         "session_id":             session_id,
         "session_filenames":      session_filenames,
         "file_versions":          _file_version_rows(parsed_data, project_path, exp_paths, stats_paths) if parsed_data else [],
+        "file_pairs":             _file_pair_rows(exp_paths, stats_paths) if parsed_data else [],
         "smtp_configured":        bool(_smtp_config),
     })
 
@@ -967,10 +1034,10 @@ async def edit_form(request: Request, session_id: str):
         "request":          request,
         "session_id":       session_id,
         "mode_title":       "Edit Project Files",
-        "mode_subtitle":    "Download the current files, replace any of them, and append new experiment and StatsResults workbook pairs if needed.",
+        "mode_subtitle":    "Keep or replace current files, add experiments, and include StatsResults where available.",
         "project_basename": os.path.basename(session["project_path"]),
         "exp_basenames":    [os.path.basename(p) for p in session["exp_paths"]],
-        "stats_basenames":  [os.path.basename(p) for p in session["stats_paths"]],
+        "stats_basenames":  [os.path.basename(p) if p else None for p in session["stats_paths"]],
     })
 
 
@@ -978,11 +1045,6 @@ async def edit_form(request: Request, session_id: str):
 async def revalidate(
     request:          Request,
     session_id:       str,
-    project_file:     UploadFile       = File(...),
-    experiment_files: List[UploadFile] = File(default=[]),
-    stats_files:      List[UploadFile] = File(default=[]),
-    new_experiment_files: List[UploadFile] = File(default=[]),
-    new_stats_files:      List[UploadFile] = File(default=[]),
 ):
     """Re-run validation, replacing only the slots where a new file was uploaded."""
     _cleanup_old_sessions()
@@ -1000,11 +1062,34 @@ async def revalidate(
     all_issues   = []
     new_sid      = None
     project_path = ""
+    exp_paths = []
+    stats_paths = []
     tmp          = tempfile.mkdtemp()
 
     try:
+        form = await request.form()
+        project_uploads = _upload_slots(form, "project_file")
+        if len(project_uploads) > 1:
+            raise ValueError("Only one project replacement workbook is allowed")
+        project_file = project_uploads[0] if project_uploads else None
+        experiment_files = _aligned_optional_uploads(
+            _upload_slots(form, "experiment_files"), len(session["exp_paths"]), "experiment_files"
+        )
+        stats_files = _aligned_optional_uploads(
+            _upload_slots(form, "stats_files"), len(session["stats_paths"]), "stats_files"
+        )
+        new_experiment_files = _upload_slots(form, "new_experiment_files")
+        new_stats_files = _aligned_optional_uploads(
+            _upload_slots(form, "new_stats_files"), len(new_experiment_files), "new_stats_files"
+        )
+        remove_stats = {
+            i for i in range(len(session["stats_paths"]))
+            if form.get(f"remove_stats_{i}") == "on"
+        }
+        if any(_is_real_upload(stats_files[i]) for i in remove_stats):
+            raise ValueError("Choose either a replacement or Remove StatsResults for the same experiment")
         # Project — replace if a new file was provided, else copy existing.
-        if project_file.filename:
+        if _is_real_upload(project_file):
             project_path = _save_upload(project_file, tmp)
         else:
             project_path = shutil.copy2(session["project_path"], tmp)
@@ -1012,7 +1097,7 @@ async def revalidate(
         # Experiments — zip new uploads with existing paths.
         exp_paths = []
         for i, (new_f, existing_p) in enumerate(zip(experiment_files, session["exp_paths"])):
-            if new_f.filename:
+            if _is_real_upload(new_f):
                 exp_paths.append(_save_upload(new_f, tmp, prefix=f"exp{i}_"))
             else:
                 exp_paths.append(shutil.copy2(existing_p, tmp))
@@ -1020,15 +1105,16 @@ async def revalidate(
         for existing_p in session["exp_paths"][len(exp_paths):]:
             exp_paths.append(shutil.copy2(existing_p, tmp))
 
-        # Stats — same pattern.
-        stats_paths = []
+        # Stats may be absent for any experiment. Blank replacements keep current files.
         for i, (new_f, existing_p) in enumerate(zip(stats_files, session["stats_paths"])):
-            if new_f.filename:
+            if i in remove_stats:
+                stats_paths.append(None)
+            elif _is_real_upload(new_f):
                 stats_paths.append(_save_upload(new_f, tmp, prefix=f"stats{i}_"))
-            else:
+            elif existing_p:
                 stats_paths.append(shutil.copy2(existing_p, tmp))
-        for existing_p in session["stats_paths"][len(stats_paths):]:
-            stats_paths.append(shutil.copy2(existing_p, tmp))
+            else:
+                stats_paths.append(None)
 
         _append_new_pairs(new_experiment_files, new_stats_files, tmp, exp_paths, stats_paths)
 
@@ -1058,6 +1144,7 @@ async def revalidate(
                 stats_files,
                 new_experiment_files,
                 new_stats_files,
+                remove_stats,
             ),
             existing_project_id=session.get("existing_project_id"),
         )
@@ -1107,6 +1194,7 @@ async def revalidate(
         "session_id":             new_sid,
         "session_filenames":      session_filenames,
         "file_versions":          _file_version_rows(parsed_data, project_path, exp_paths, stats_paths) if parsed_data else [],
+        "file_pairs":             _file_pair_rows(exp_paths, stats_paths) if parsed_data else [],
         "smtp_configured":        bool(_smtp_config),
     })
 
@@ -1163,8 +1251,9 @@ async def submit_pounce(
 
     added_files = file_change_summary.get("added") or []
     replaced_files = file_change_summary.get("replaced") or []
+    removed_files = file_change_summary.get("removed") or []
     unchanged_files = file_change_summary.get("unchanged") or []
-    if added_files or replaced_files or unchanged_files:
+    if added_files or replaced_files or removed_files or unchanged_files:
         body_lines.extend([
             "",
             "=== File Change Summary ===",
@@ -1175,6 +1264,9 @@ async def submit_pounce(
         if replaced_files:
             body_lines.append("  Replaced:")
             body_lines.extend([f"    - {item}" for item in replaced_files])
+        if removed_files:
+            body_lines.append("  Removed:")
+            body_lines.extend([f"    - {item}" for item in removed_files])
         if unchanged_files:
             body_lines.append("  Unchanged:")
             body_lines.extend([f"    - {item}" for item in unchanged_files])

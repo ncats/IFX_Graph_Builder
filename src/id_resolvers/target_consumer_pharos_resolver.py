@@ -41,7 +41,8 @@ class TargetConsumerPharosCanonicalResolver(SqliteCacheResolver):
 
     name = "TARGETS Pharos canonical projection"
 
-    def __init__(self, data_source, **kwargs):
+    def __init__(self, data_source, allow_unmatched_prefixes=None, **kwargs):
+        self.allow_unmatched_prefixes = frozenset(allow_unmatched_prefixes or ())
         self.snapshot_id = data_source.snapshot_id
         self.mapping_path = Path(data_source.file("app_graph/target_mappings.tsv"))
         self.relationship_path = Path(data_source.file("app_graph/target_relationships.tsv"))
@@ -72,6 +73,24 @@ class TargetConsumerPharosCanonicalResolver(SqliteCacheResolver):
         if tuple(int(part) for part in data_source.version.split(".")) >= (2, 5, 2) and not self.has_match_type:
             raise ValueError("TARGETS 2.5.2+ mapping file lacks required match_type column")
         super().__init__(canonical_class=Protein, **kwargs)
+
+    def _eligible_unmatched(self, entity_map):
+        prefixes = getattr(self, "allow_unmatched_prefixes", frozenset())
+        if not prefixes:
+            return entity_map
+        filtered = dict(entity_map)
+        filtered[self.MatchKeys.unmatched] = {
+            source_id: node
+            for source_id, node in entity_map[self.MatchKeys.unmatched].items()
+            if source_id.split(":", 1)[0] in prefixes
+        }
+        return filtered
+
+    def parse_entity_map(self, entity_map):
+        return super().parse_entity_map(self._eligible_unmatched(entity_map))
+
+    def parse_flat_node_list_from_map(self, entity_map):
+        return super().parse_flat_node_list_from_map(self._eligible_unmatched(entity_map))
 
     def get_version_info(self) -> str:
         return ":".join((self.snapshot_id, _PROJECTION_VERSION, *self.checksums))

@@ -136,10 +136,23 @@ def restore_pounce_issue(issue, original_sheets: dict[str, str], version: int) -
             issue.field = replacements[issue.field]
         if issue.column in replacements:
             issue.column = replacements[issue.column]
-        for normalized, original in replacements.items():
-            issue.message = re.sub(
-                rf"(?<!\w){re.escape(normalized)}(?!\w)", original, issue.message
+        map_prefix = f"'{canonical_sheet}' maps '"
+        mapped_key_end = issue.message.find("' → '", len(map_prefix))
+        if issue.message.startswith(map_prefix) and mapped_key_end != -1:
+            # Only the standard key is normalized. The submitter's column name
+            # after the arrow must remain exactly as it appeared in the file.
+            key_start = len(map_prefix)
+            key = issue.message[key_start:mapped_key_end]
+            issue.message = (
+                issue.message[:key_start]
+                + replacements.get(key, key)
+                + issue.message[mapped_key_end:]
             )
+        else:
+            for normalized, original in replacements.items():
+                issue.message = re.sub(
+                    rf"(?<!\w){re.escape(normalized)}(?!\w)", original, issue.message
+                )
         issue.sheet = original_sheets.get(canonical_sheet, canonical_sheet)
     for normalized, original in original_sheets.items():
         if normalized != original:

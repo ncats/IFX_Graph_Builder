@@ -31,7 +31,6 @@ BioSampleMap:
     - biospecimen_id
     - biospecimen_type
     - organism_names
-    - disease_names
   indexed_group:
     - ["exposure{}_names", "exposure{}_type", "exposure{}_category"]
 
@@ -47,7 +46,6 @@ ExperimentMeta:
     - experiment_name
     - experiment_description
     - experiment_design
-    - experiment_type
     - experiment_data_file
     - date
     - lead_data_generator
@@ -129,14 +127,9 @@ StatsResultsMeta:
     - peri_processing_description
 
 
-EffectSize_Map:
-  required_if:
-    metabolite_id:
-      when_field: platform_type
-      when_values: [metabolomics, lipidomics]
-    gene_id:
-      when_field: platform_type
-      when_values: [bulk_rnaseq, sc_rnaseq, atac_seq, rasl_seq, qpcr, chip_seq]
+# The paired StatsResults analyte key is checked per experiment by
+# PounceParser.parse_stats_results(). A global map check would incorrectly
+# require keys for experiments that have no StatsResults workbook.
 
 # Cross-sheet ID reference checks are all handled as structural checks at parse time,
 # not here.  This gives each error a source_file and respects per-file pairing.

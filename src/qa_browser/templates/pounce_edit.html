@@ -42,7 +42,7 @@
         </div>
     </div>
 
-    {# ── Experiment / StatsResults pairs ───────────────────────────────── #}
+    {# ── Experiment rows with optional StatsResults ────────────────────── #}
     <div class="card" style="margin-bottom: 1.25rem;">
         <div class="upload-field-label" style="margin-bottom: 0.25rem;">Experiments</div>
         <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 1rem;">
@@ -52,7 +52,7 @@
         {% for i in range(exp_basenames|length) %}
         <div class="pair-row" style="{{ '' if not loop.last else 'margin-bottom: 0;' }}">
             <div class="pair-cell">
-                <div class="pair-cell-label">Experiment {{ i + 1 }}</div>
+            <div class="pair-cell-label">Experiment {{ i + 1 }} · required</div>
                 <div class="loaded-file-panel has-file" style="margin-bottom: 0.55rem; padding: 0.7rem 0.8rem; display: flex; justify-content: space-between; gap: 0.75rem; align-items: center;">
                     <div style="min-width: 0;">
                         <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.2rem;">Currently loaded</div>
@@ -74,7 +74,8 @@
                 </div>
             </div>
             <div class="pair-cell">
-                <div class="pair-cell-label">Stats Results {{ i + 1 }}</div>
+                <div class="pair-cell-label">StatsResults {{ i + 1 }} · optional</div>
+                {% if stats_basenames[i] %}
                 <div class="loaded-file-panel has-file" style="margin-bottom: 0.55rem; padding: 0.7rem 0.8rem; display: flex; justify-content: space-between; gap: 0.75rem; align-items: center;">
                     <div style="min-width: 0;">
                         <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.2rem;">Currently loaded</div>
@@ -83,6 +84,14 @@
                     <a href="{{ root_path }}/pounce/download/{{ session_id }}/{{ stats_basenames[i] }}"
                        class="btn" style="white-space: nowrap;">Download</a>
                 </div>
+                <label style="display: block; font-size: 12px; margin-bottom: 0.55rem;">
+                    <input type="checkbox" name="remove_stats_{{ i }}" class="remove-stats-checkbox">
+                    Remove this StatsResults workbook
+                    <span class="remove-stats-note" hidden>— will be removed when you validate</span>
+                </label>
+                {% else %}
+                <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 0.55rem;">No StatsResults workbook</div>
+                {% endif %}
                 <div class="drop-zone">
                     <div class="dz-empty">
                         <div class="dz-icon">↑</div>
@@ -102,7 +111,7 @@
     <div class="card" style="margin-bottom: 1.25rem;">
         <div class="upload-field-label" style="margin-bottom: 0.25rem;">Add Experiment Pairs</div>
         <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 1rem;">
-            Add one or more new experiment and StatsResults workbook pairs. Leave an added row empty to ignore it.
+            Add experiments with optional StatsResults workbooks. Leave a row empty to ignore it.
         </p>
 
         <div id="new-experiment-pairs">
@@ -122,7 +131,7 @@
                     </div>
                 </div>
                 <div class="pair-cell">
-                    <div class="pair-cell-label">New Stats Results 1</div>
+                    <div class="pair-cell-label">New StatsResults 1 · optional</div>
                     <div class="drop-zone">
                         <div class="dz-empty">
                             <div class="dz-icon">↑</div>
@@ -192,6 +201,21 @@ function setFile(zone, name) {
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 document.querySelectorAll('.drop-zone').forEach(dz => initDropZone(dz));
+document.querySelectorAll('.remove-stats-checkbox').forEach(checkbox => {
+    checkbox.addEventListener('change', () => {
+        const zone = checkbox.closest('.pair-cell').querySelector('.drop-zone');
+        const note = checkbox.closest('label').querySelector('.remove-stats-note');
+        const input = zone.querySelector('.drop-zone-input');
+        note.hidden = !checkbox.checked;
+        zone.style.pointerEvents = checkbox.checked ? 'none' : '';
+        zone.style.opacity = checkbox.checked ? '0.5' : '';
+        if (checkbox.checked) {
+            input.value = '';
+            zone.classList.remove('has-file');
+            zone.querySelector('.dz-filename').textContent = '';
+        }
+    });
+});
 
 function addPair() {
     const container = document.getElementById('new-experiment-pairs');
@@ -216,8 +240,8 @@ function updatePairLabels() {
     const rows = document.querySelectorAll('#new-experiment-pairs .pair-row');
     rows.forEach((row, i) => {
         const labels = row.querySelectorAll('.pair-cell-label');
-        if (labels[0]) labels[0].textContent = `New Experiment ${i + 1}`;
-        if (labels[1]) labels[1].textContent = `New Stats Results ${i + 1}`;
+        if (labels[0]) labels[0].textContent = `New Experiment ${i + 1} · required`;
+        if (labels[1]) labels[1].textContent = `New StatsResults ${i + 1} · optional`;
         const rmBtn = row.querySelector('.pair-remove-btn');
         if (rmBtn) rmBtn.style.display = rows.length > 1 ? 'flex' : 'none';
     });

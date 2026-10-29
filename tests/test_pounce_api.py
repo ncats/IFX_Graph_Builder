@@ -85,6 +85,49 @@ def test_api_detects_mixed_versions_without_client_version_field():
     ])
 
 
+def test_api_keeps_optional_stats_aligned_to_its_experiment():
+    payload = _submission()
+    first_experiment = payload["experiments"][0]
+    second_experiment = _workbook(_TEMPLATES / "POUNCE_Experiment_Metabo_Template_v2.xlsx")
+    second_experiment["source_id"] = "second-experiment.xlsx"
+    payload["experiments"] = [first_experiment, second_experiment]
+    payload["stats_results"] = [None, payload["stats_results"][0]]
+    stats_meta = next(
+        sheet for sheet in payload["stats_results"][1]["sheets"]
+        if sheet["name"] == "StatsResultsMeta"
+    )
+    key_column = stats_meta["columns"].index("NCATSDPI_Variable_Name")
+    value_column = stats_meta["columns"].index("Submitter_Value")
+    for row in stats_meta["rows"]:
+        if row[key_column] == "pre_processing_description":
+            row[value_column] = ""
+            break
+
+    response = _client().post("/pounce/api/validate", json=payload)
+    assert response.status_code == 200
+    files = response.json()["files"]
+    assert [item["source_id"] for item in files] == [
+        payload["project"]["source_id"], first_experiment["source_id"],
+        second_experiment["source_id"], payload["stats_results"][1]["source_id"],
+    ]
+    stats_issues = [
+        issue for issue in response.json()["issues"] if issue["entity"] == "stats_results"
+    ]
+    assert stats_issues
+    assert all(issue["source_id"] == payload["stats_results"][1]["source_id"] for issue in stats_issues)
+
+    payload["stats_results"] = [None]
+    assert _client().post("/pounce/api/validate", json=payload).status_code == 422
+
+
+def test_api_accepts_no_stats_for_one_experiment():
+    payload = _submission()
+    payload["stats_results"] = [None]
+    response = _client().post("/pounce/api/validate", json=payload)
+    assert response.status_code == 200
+    assert all(item["role"] != "stats_results" for item in response.json()["files"])
+
+
 def test_api_rejects_missing_matrix_cells_and_duplicate_sources():
     payload = _submission()
     payload["experiments"][0]["source_id"] = payload["project"]["source_id"]

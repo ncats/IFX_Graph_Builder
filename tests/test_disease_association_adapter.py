@@ -54,7 +54,8 @@ def _fixture(tmp_path, *, duplicate_link=False):
     ]
     summary = [dict(ncats_disease_id="IFXDisease:D", ncats_gene_id="IFXGene:G",
                     support_tier="conflicting", support_score_raw="2.5", n_supporting_sources="2",
-                    n_independent_origins="2", association_ids="IFXDA:ONE|IFXDA:TWO")]
+                    n_independent_origins="2", evidence_origins="ClinGen|JensenLab",
+                    association_ids="IFXDA:ONE|IFXDA:TWO")]
     if duplicate_link:
         summary[0]["association_ids"] += "|IFXDA:ONE"
     files = {
@@ -70,6 +71,10 @@ def test_grouped_assertions_preserve_raw_ids_and_promotable_payload(tmp_path):
     assert (edge.start_node.id, edge.end_node.id) == ("IFXGene:G", "IFXDisease:D")
     assert len(edge.details) == 2
     assert edge.disease_harmonizer_support["support_tier"] == "conflicting"
+    assert edge.gene_assessments == [{
+        "gene_id": "IFXGene:G", "tier": "conflicting", "score": "2.5",
+        "origins": ["ClinGen", "JensenLab"],
+    }]
     assert "association_ids" not in edge.disease_harmonizer_support
     assert (edge.details[0].source_id, edge.details[0].negated) == ("MONDO:1", True)
     assert edge.details[0].evidence_label == "Disputed"
@@ -87,7 +92,17 @@ def test_grouped_assertions_preserve_raw_ids_and_promotable_payload(tmp_path):
     )
     assert type(promoted) is ProteinDiseaseEdge
     assert promoted.details == edge.details
-    assert promoted.disease_harmonizer_support == edge.disease_harmonizer_support
+    assert promoted.gene_assessments == edge.gene_assessments
+    assert promoted.disease_harmonizer_support is None
+
+
+def test_association_adapter_emits_gene_endpoints_before_edges(tmp_path):
+    batches = list(DiseaseConsumerAssociationAdapter(
+        _fixture(tmp_path), emit_gene_nodes=True
+    ).get_all())
+    assert [type(item).__name__ for item in batches[0]] == ["Gene"]
+    assert batches[0][0].id == "IFXGene:G"
+    assert type(batches[1][0]) is GeneDiseaseEdge
 
 
 def test_duplicate_assertion_link_fails(tmp_path):

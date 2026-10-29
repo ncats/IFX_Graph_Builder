@@ -46,11 +46,11 @@ class PounceValidationRequest(BaseModel):
     schema_version: Literal[1]
     project: WorkbookTables
     experiments: list[WorkbookTables]
-    stats_results: list[WorkbookTables]
+    stats_results: list[WorkbookTables | None]
 
     @model_validator(mode="after")
     def check_workbooks(self):
-        workbooks = [self.project, *self.experiments, *self.stats_results]
+        workbooks = [self.project, *self.experiments, *(item for item in self.stats_results if item is not None)]
         source_ids = [workbook.source_id for workbook in workbooks]
         if len(source_ids) != len(set(source_ids)):
             raise ValueError("source_id must be unique across the submission")

@@ -48,6 +48,7 @@ class GeneDiseaseEdge(Relationship):
     end_node: Disease = None
     details: List["DiseaseAssociationDetail"] = field(default_factory=list)
     disease_harmonizer_support: Optional[dict[str, str]] = None
+    gene_assessments: List[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -91,6 +92,7 @@ class ProteinDiseaseEdge(Relationship):
     end_node: Disease = None
     details: List[DiseaseAssociationDetail] = field(default_factory=list)
     disease_harmonizer_support: Optional[dict[str, str]] = None
+    gene_assessments: List[dict] = field(default_factory=list)
 
 
 @dataclass

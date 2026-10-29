@@ -1,5 +1,23 @@
 from src.shared.record_merger import RecordMerger, FieldConflictBehavior
 
+
+def test_gene_assessments_merge_on_shared_protein_edge():
+    records = [
+        {
+            "start_id": "IFXProtein:P", "end_id": "IFXDisease:D",
+            "gene_assessments": [{"gene_id": "IFXGene:A", "tier": "refuted", "score": "0", "origins": ["ClinGen"]}],
+            "entity_resolution": "gene A", "provenance": "DISEASES 2.3.3",
+        },
+        {
+            "start_id": "IFXProtein:P", "end_id": "IFXDisease:D",
+            "gene_assessments": [{"gene_id": "IFXGene:B", "tier": "supported", "score": "4", "origins": ["OMIM"]}],
+            "entity_resolution": "gene B", "provenance": "DISEASES 2.3.3",
+        },
+    ]
+    merged = RecordMerger().merge_records(records, {}, nodes_or_edges="edges")
+    assert len(merged) == 1
+    assert [value["gene_id"] for value in merged[0]["gene_assessments"]] == ["IFXGene:A", "IFXGene:B"]
+
 def get_existing_records():
     return {
         "1": {

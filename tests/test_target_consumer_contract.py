@@ -10,7 +10,7 @@ from src.id_resolvers.target_consumer_resolver import (
     mapping_curie,
 )
 from src.id_resolvers.target_consumer_pharos_resolver import TargetConsumerPharosCanonicalResolver
-from src.interfaces.id_resolver import IdMatch, IdResolver
+from src.interfaces.id_resolver import IdMatch, IdResolver, NoMatchBehavior, MultiMatchBehavior
 from src.input_adapters.target_graph.target_consumer import (
     TargetConsumerGeneAdapter,
     TargetConsumerProteinAdapter,
@@ -20,6 +20,22 @@ from src.models.gene import Gene
 from src.models.datasource_version_info import DatasourceVersionInfo
 from src.models.transcript import GeneTranscriptEdge
 from src.output_adapters.arango_output_adapter import ArangoOutputAdapter
+
+
+def test_pharos_gene_route_retains_only_unmatched_ifx_genes():
+    resolver = object.__new__(TargetConsumerPharosCanonicalResolver)
+    resolver.allow_unmatched_prefixes = frozenset({"IFXGene"})
+    resolver.no_match_behavior = NoMatchBehavior.Allow
+    resolver.multi_match_behavior = MultiMatchBehavior.All
+    entity_map = {
+        IdResolver.MatchKeys.matched: {},
+        IdResolver.MatchKeys.newborns: {},
+        IdResolver.MatchKeys.unmatched: {
+            "IFXGene:GENE": Gene(id="IFXGene:GENE"),
+            "NCBIGene:123": Gene(id="NCBIGene:123"),
+        },
+    }
+    assert list(resolver.parse_entity_map(entity_map)) == ["IFXGene:GENE"]
 
 
 class _Release:

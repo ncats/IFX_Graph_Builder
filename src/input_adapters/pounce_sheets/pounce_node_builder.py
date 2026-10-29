@@ -49,6 +49,10 @@ class PounceContext:
 
 def _iter_pairs(experiment_files, stats_files):
     """Yield (exp_file, stats_file_or_None) pairs."""
+    if stats_files and len(stats_files) != len(experiment_files):
+        raise ValueError(
+            "StatsResults workbook slots must match experiment count; use None for an experiment without stats"
+        )
     for i, exp_file in enumerate(experiment_files):
         yield exp_file, stats_files[i] if i < len(stats_files) else None
 

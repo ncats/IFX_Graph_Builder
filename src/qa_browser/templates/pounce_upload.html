@@ -12,7 +12,7 @@
 <div class="hero">
     <div class="hero-text">
         <h1 class="hero-title">POUNCE Submission</h1>
-        <p class="hero-subtitle">Add a new project by uploading a project workbook and one or more experiment and StatsResults workbook pairs.</p>
+        <p class="hero-subtitle">Add a project workbook and one or more experiment workbooks. Add StatsResults for each experiment when available.</p>
         <p class="hero-subtitle">V2 and v3 workbooks are supported. The format is detected from each file.</p>
     </div>
 </div>
@@ -38,21 +38,20 @@
         </div>
     </div>
 
-    {# ── Experiment / StatsResults pairs ──────────────────────────────────── #}
+    {# ── Experiment rows with optional StatsResults ──────────────────────── #}
     <div class="card" style="margin-bottom: 1.25rem;">
         <div class="upload-field-label" style="margin-bottom: 0.25rem;">
             Experiments <span style="color: var(--danger);">*</span>
         </div>
         <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 1rem;">
-            Each experiment workbook must be paired with its StatsResults workbook.
-            Add a row for each experiment in the submission.
+            Add one row per experiment. StatsResults is optional for each row.
         </p>
 
         <div id="experiment-pairs">
             {# First pair — cloned by JS for subsequent pairs #}
             <div class="pair-row">
                 <div class="pair-cell">
-                    <div class="pair-cell-label">Experiment 1</div>
+                    <div class="pair-cell-label">Experiment 1 · required</div>
                     <div class="drop-zone">
                         <div class="dz-empty">
                             <div class="dz-icon">↑</div>
@@ -66,7 +65,7 @@
                     </div>
                 </div>
                 <div class="pair-cell">
-                    <div class="pair-cell-label">Stats Results 1</div>
+                    <div class="pair-cell-label">StatsResults 1 · optional</div>
                     <div class="drop-zone">
                         <div class="dz-empty">
                             <div class="dz-icon">↑</div>
@@ -76,7 +75,7 @@
                             <div class="dz-filename"></div>
                             <div class="dz-change">Click or drop to replace</div>
                         </div>
-                        <input type="file" name="stats_files" accept=".xlsx" required class="drop-zone-input">
+                        <input type="file" name="stats_files" accept=".xlsx" class="drop-zone-input">
                     </div>
                 </div>
                 <button type="button" class="pair-remove-btn" onclick="removePair(this)"
@@ -157,8 +156,8 @@ function updateLabels() {
     const rows = document.querySelectorAll('#experiment-pairs .pair-row');
     rows.forEach((row, i) => {
         const labels = row.querySelectorAll('.pair-cell-label');
-        if (labels[0]) labels[0].textContent = `Experiment ${i + 1}`;
-        if (labels[1]) labels[1].textContent = `Stats Results ${i + 1}`;
+        if (labels[0]) labels[0].textContent = `Experiment ${i + 1} · required`;
+        if (labels[1]) labels[1].textContent = `StatsResults ${i + 1} · optional`;
         const rmBtn = row.querySelector('.pair-remove-btn');
         if (rmBtn) rmBtn.style.display = rows.length > 1 ? 'flex' : 'none';
     });

@@ -158,3 +158,21 @@ def test_v3_issue_uses_original_sheet_and_key_names():
     assert issue.field == "runbiosample_id"
     assert issue.column == "runbiosample_id"
     assert issue.message == "'BiospecimenMap' maps 'runbiosample_id' but column is missing in 'BiospecimenMeta'"
+
+
+def test_v3_mapping_issue_preserves_submitter_column_name():
+    issue = ValidationError(
+        severity="error", entity="parse", field="metab_id",
+        sheet="MetabMap", column="metab_id",
+        message=(
+            "'MetabMap' maps 'metab_id' → 'metab_id', "
+            "but column 'metab_id' does not exist in 'MetabMeta'"
+        ),
+    )
+    restore_pounce_issue(issue, {"MetabMap": "MetabMap"}, 3)
+    assert issue.field == "metabfeature_id"
+    assert issue.column == "metabfeature_id"
+    assert issue.message == (
+        "'MetabMap' maps 'metabfeature_id' → 'metab_id', "
+        "but column 'metab_id' does not exist in 'MetabMeta'"
+    )

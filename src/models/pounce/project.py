@@ -22,6 +22,7 @@ class LabGroup(LabeledIntEnum):
     RSC = (6, "RSC")
     IFX = (7, "IFX")
     SCTL = (8, "SCTL")
+    TMB = (9, "TMB")
 
 class ProjectType(LabeledIntEnum):
     DRUG_SCREENING                   = (1, "Drug Screening")
