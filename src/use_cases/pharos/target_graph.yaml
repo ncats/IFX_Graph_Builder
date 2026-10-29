@@ -2,6 +2,7 @@ source_credentials: &source_credentials ./src/use_cases/secrets/ifxdev_arangodb.
 legacy_pharos_credentials: &legacy_pharos_credentials ./src/use_cases/secrets/pharos_credentials.yaml
 database_name: &database_name target_graph
 targets_release: &targets_release {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.5.2}
+diseases_release: &diseases_release {kind: derived_snapshot, snapshot_id: ifx_harmonizers:diseases:2.3.3}
 pchembl_cutoff: &pchembl_cutoff 5
 
 registry:
@@ -14,7 +15,15 @@ resolvers:
     kwargs:
       types:
         - Ligand
-        - Disease
+
+  - label: disease_ids
+    import: ./src/id_resolvers/disease_consumer_resolver.py
+    class: DiseaseConsumerResolver
+    kwargs:
+      data_source: *diseases_release
+      types: [Disease]
+      no_match_behavior: Allow
+      multi_match_behavior: Error
 
   - label: tg_genes
     import: ./src/id_resolvers/target_consumer_resolver.py
@@ -310,11 +319,20 @@ input_adapters:
     kwargs:
       data_source: {kind: external_dataset_version, snapshot_id: rdas:diseases_graphql:rdas-diseases-graphql}
 
-  - import: ./src/input_adapters/jensenlab/diseases.py
-    class: JensenLabDiseasesAdapter
+  - import: ./src/input_adapters/disease_harmonizer/consumer.py
+    class: DiseaseConsumerPayloadAdapter
     kwargs:
-      data_source: jensenlab:diseases:2026-10-23
-      textmining_min_zscore: 6.0
+      data_source: *diseases_release
+
+  - import: ./src/input_adapters/disease_harmonizer/hierarchy.py
+    class: DiseaseConsumerHierarchyAdapter
+    kwargs:
+      data_source: *diseases_release
+
+  - import: ./src/input_adapters/disease_harmonizer/associations.py
+    class: DiseaseConsumerAssociationAdapter
+    kwargs:
+      data_source: *diseases_release
 
   - import: ./src/input_adapters/pharos_mysql/eram_disease_adapter.py
     class: ERAMDiseaseAdapter

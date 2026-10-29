@@ -72,6 +72,7 @@ input_adapters:
       data_source: {kind: source_snapshot, snapshot_id: chembl:activity_exports:chembl37-export1}
       pchembl_cutoff: *pchembl_cutoff
 
+  # JensenLab protein publication counts feed TDL; this is not disease evidence.
   - import: ./src/input_adapters/jensenlab/total_pmscore.py
     class: TotalPMScoreAdapter
     kwargs:

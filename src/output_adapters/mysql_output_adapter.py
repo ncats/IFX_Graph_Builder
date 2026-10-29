@@ -609,6 +609,7 @@ class TCRDOutputAdapter(MySQLOutputAdapter):
         self._resolver_source_yaml = source_yaml
 
     def do_pre_processing(self) -> None:
+        self._validate_disease_association_export_contract()
         self._validate_source_graph_resolver_metadata()
         self._validate_disease_identity_schema()
         session = self.get_session()
@@ -619,6 +620,7 @@ class TCRDOutputAdapter(MySQLOutputAdapter):
             session.close()
 
     def create_or_truncate_datastore(self, truncate_tables: bool = None) -> bool:
+        self._validate_disease_association_export_contract()
         self._validate_source_graph_resolver_metadata()
         super().create_or_truncate_datastore(truncate_tables=truncate_tables)
         self.output_converter.sql_base.metadata.create_all(self.get_engine())
@@ -630,6 +632,29 @@ class TCRDOutputAdapter(MySQLOutputAdapter):
         finally:
             session.close()
         return True
+
+    def _validate_disease_association_export_contract(self) -> None:
+        """Reject gene-projected disease details before MySQL can treat them as direct."""
+        if (getattr(self, "source_graph_credentials", None) is None
+                or not getattr(self, "source_graph_database", None)):
+            return
+        adapter = ArangoAdapter(self.source_graph_credentials, self.source_graph_database)
+        db = adapter.get_db()
+        if not db.has_collection("ProteinDiseaseEdge"):
+            return
+        projected = adapter.runQuery(
+            "FOR edge IN ProteinDiseaseEdge "
+            "FILTER LENGTH(NOT_NULL(edge.gene_assessments, [])) > 0 "
+            "LIMIT 1 RETURN true"
+        )
+        if projected:
+            raise RuntimeError(
+                f"Source graph {self.source_graph_database!r} contains gene-projected "
+                "ProteinDiseaseEdge assessments, but Pharos MySQL conversion cannot "
+                "preserve gene assessments, reported protein IDs, or projection route. "
+                "Implement and validate route-aware disease export before rebuilding "
+                f"{self.database_name}. No MySQL tables were truncated."
+            )
 
     def _validate_disease_identity_schema(self) -> None:
         inspector = sqlalchemy_inspect(self.get_engine())

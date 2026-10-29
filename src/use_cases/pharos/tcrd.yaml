@@ -21,7 +21,6 @@ resolvers:
     kwargs:
       types:
         - Ligand
-        - Disease
 
   - label: tcrd_targets
     import: ./src/id_resolvers/target_consumer_pharos_resolver.py
@@ -30,10 +29,28 @@ resolvers:
       data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.5.2}
       types:
         - Protein
-        - Gene
         - Transcript
       no_match_behavior: Skip
       multi_match_behavior: All
+
+  - label: tcrd_disease_genes
+    import: ./src/id_resolvers/target_consumer_pharos_resolver.py
+    class: TargetConsumerPharosCanonicalResolver
+    kwargs:
+      data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.5.2}
+      types: [Gene]
+      no_match_behavior: Allow
+      multi_match_behavior: All
+      allow_unmatched_prefixes: [IFXGene]
+
+  - label: disease_ids
+    import: ./src/id_resolvers/disease_consumer_resolver.py
+    class: DiseaseConsumerResolver
+    kwargs:
+      data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:diseases:2.3.3}
+      types: [Disease]
+      no_match_behavior: Allow
+      multi_match_behavior: Error
 
 input_adapters:
   - import: ./src/input_adapters/pharos_source_tcrd/ontology_tables.py
