@@ -158,3 +158,14 @@ def test_node_normalizer_returns_examples_for_registered_types():
         "CHEBI:15377",
         "PUBCHEM.COMPOUND:2244",
     ]
+
+
+def test_node_normalizer_uses_configured_production_endpoint():
+    resolver = TranslatorNodeNormResolver(
+        types=["Ligand"],
+        base_url="https://nodenorm.transltr.io/1.5/",
+    )
+
+    assert resolver.node_norm_url() == "https://nodenorm.transltr.io/1.5/get_normalized_nodes"
+    assert resolver.node_norm_prefixes_url() == "https://nodenorm.transltr.io/1.5/get_curie_prefixes"
+    assert resolver.name.endswith("https://nodenorm.transltr.io/1.5")

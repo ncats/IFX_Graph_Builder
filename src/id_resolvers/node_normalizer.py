@@ -9,7 +9,7 @@ from src.shared.util import yield_per
 
 class TranslatorNodeNormResolver(IdResolver):
     base_url = "https://nodenormalization-sri.renci.org/1.5"
-    name = f"Translator Node Normalizer: {base_url}"
+    name = "Translator Node Normalizer"
     conflate_genes_and_proteins: bool = False
     retryable_status_codes = {408, 429, 500, 502, 503, 504}
     node_type_to_biolink_type = {
@@ -39,8 +39,14 @@ class TranslatorNodeNormResolver(IdResolver):
                  request_timeout: int = 120,
                  max_retries: int = 10,
                  retry_backoff_seconds: int = 60,
+                 base_url: str | None = None,
                  **kwargs):
         super().__init__(**kwargs)
+        if base_url is not None:
+            if not isinstance(base_url, str) or not base_url.startswith("https://"):
+                raise ValueError("Node Normalizer base_url must be an HTTPS URL")
+            self.base_url = base_url.rstrip("/")
+        self.name = f"{self.name}: {self.base_url}"
         self.batch_size = batch_size
         self.request_timeout = request_timeout
         self.max_retries = max(1, max_retries)

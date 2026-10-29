@@ -13,6 +13,7 @@ resolvers:
     import: ./src/id_resolvers/node_normalizer.py
     class: TranslatorNodeNormResolver
     kwargs:
+      base_url: https://nodenorm.transltr.io/1.5
       types:
         - Ligand
 
@@ -59,6 +60,7 @@ resolvers:
     import: ./src/id_resolvers/hcop_ortholog_gene_resolver.py
     class: HCOPOrthologGeneResolver
     kwargs:
+      base_url: https://nodenorm.transltr.io/1.5
       data_source: hcop:human_all_sixteen_column:2026-10-01
       accepted_species: ["9598", "9544", "10090", "10116", "9615", "9796", "9913", "9823", "13616", "9258", "9031", "28377", "8364", "7955", "6239", "7227", "4932"]
       drop_blank_ortholog_identity: true

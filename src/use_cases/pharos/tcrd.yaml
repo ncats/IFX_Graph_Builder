@@ -19,6 +19,7 @@ resolvers:
     import: ./src/id_resolvers/node_normalizer.py
     class: TranslatorNodeNormResolver
     kwargs:
+      base_url: https://nodenorm.transltr.io/1.5
       types:
         - Ligand
 
