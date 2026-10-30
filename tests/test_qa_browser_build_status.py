@@ -152,11 +152,15 @@ def test_diagnostics_page_query_is_bounded_and_scoped_to_run():
         def has_collection(self, name):
             return name in {"build_diagnostics", "metadata_store"}
 
-    result = _get_build_diagnostics(DB(), "run.yaml", kind="unmatched_id", adapter="input:X")
+    result = _get_build_diagnostics(DB(), "run.yaml", kind="unmatched_id", adapter="input:X",
+                                    final_node_presence="absent")
     assert len(result["rows"]) == 100
     assert result["next_query"]
     assert all(call[1]["run_id"] == "run.yaml" for call in calls)
     assert calls[-1][1]["adapter"] == "input:X"
+    assert calls[-1][1]["final_node_presence"] == "absent"
+    assert "d.final_node_present == false" in calls[-1][0]
+    assert "final_node_presence=absent" in result["next_query"]
 
 
 def test_diagnostic_summaries_cover_whole_run_and_keep_distinct_counts():
@@ -186,7 +190,10 @@ def test_diagnostic_summaries_cover_whole_run_and_keep_distinct_counts():
 
     assert unmatched["ids"] == 3
     assert unmatched["occurrences"] == 11
+    assert unmatched["absent_ids"] == 1
+    assert unmatched["affected_adapters"] == 1
     assert unmatched["adapters"][0]["allowed_ids"] == 1
+    assert unmatched["adapters"][0]["prefixes"][0]["absent_ids"] == 1
     assert unmatched["adapters"][0]["prefixes"][1]["prefix"] == "No prefix"
     assert dangling["deleted"] == 5
     assert dangling["observed"] == 0

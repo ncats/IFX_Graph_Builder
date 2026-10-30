@@ -315,6 +315,20 @@ td.mono { font-family: var(--mono); font-size: 12px; }
     letter-spacing: 0.05em;
 }
 
+.diagnostic-adapter-card { margin: 1rem 0; }
+.diagnostic-card-heading {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.5rem;
+    margin-bottom: 0.75rem;
+}
+.diagnostic-card-heading h2 { margin: 0; overflow-wrap: anywhere; }
+.diagnostic-card-metrics { display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; }
+.diagnostic-table-scroll { overflow-x: auto; }
+.diagnostic-table-scroll table { min-width: 650px; margin-bottom: 0; }
+
 .report-tabs {
     display: flex;
     flex-wrap: wrap;

@@ -9202,7 +9202,8 @@ def _get_build_status(db) -> Optional[dict]:
 
 def _get_build_diagnostics(db, run_id: str | None, kind: str = "", adapter: str = "",
                            node_type: str = "", endpoint_role: str = "", after: str = "",
-                           id_prefix: str = "", edge_collection: str = "") -> dict:
+                           id_prefix: str = "", edge_collection: str = "",
+                           final_node_presence: str = "") -> dict:
     if not db.has_collection("build_diagnostics") or not run_id:
         return {"available": False, "run_id": run_id, "rows": []}
     status_doc = None
@@ -9218,6 +9219,7 @@ def _get_build_diagnostics(db, run_id: str | None, kind: str = "", adapter: str 
         "run_id": run_id, "kind": kind, "adapter": adapter, "node_type": node_type,
         "endpoint_role": endpoint_role, "after": after,
         "id_prefix": id_prefix, "edge_collection": edge_collection,
+        "final_node_presence": final_node_presence,
     }
     summary = list(db.aql.execute("""
         FOR d IN build_diagnostics
@@ -9238,6 +9240,8 @@ def _get_build_diagnostics(db, run_id: str | None, kind: str = "", adapter: str 
                 AND (@endpoint_role == '' OR d.endpoint_role == @endpoint_role)
                 AND (@id_prefix == '' OR (d.kind == 'unmatched_id' AND prefix == @id_prefix))
                 AND (@edge_collection == '' OR d.edge_collection == @edge_collection)
+                AND (@final_node_presence == '' OR
+                     (@final_node_presence == 'absent' AND d.kind == 'unmatched_id' AND d.final_node_present == false))
                 AND (@after == '' OR d._key > @after)
             SORT d._key
             LIMIT 101
@@ -9295,11 +9299,28 @@ def _get_unmatched_id_summary(db, run_id: str) -> dict:
                     "present_ids", "checked_ids"):
             group[key] += row[key]
         group["prefixes"].append(row)
-    groups = sorted(adapters.values(), key=lambda item: (-item["ids"], item["adapter"]))
+    for group in adapters.values():
+        group["absent_ids"] = group["checked_ids"] - group["present_ids"]
+        for row in group["prefixes"]:
+            row["absent_ids"] = row["checked_ids"] - row["present_ids"]
+    all_checked = sum(group["checked_ids"] for group in adapters.values()) == sum(
+        group["ids"] for group in adapters.values()
+    )
+    for group in adapters.values():
+        group["prefixes"].sort(key=lambda row: (
+            -row["absent_ids"] if all_checked else -row["ids"], row["node_type"], row["prefix"]
+        ))
+    groups = sorted(adapters.values(), key=lambda item: (
+        -item["absent_ids"] if all_checked else -item["ids"], item["adapter"]
+    ))
     return {
         "adapters": groups,
         "ids": sum(group["ids"] for group in groups),
         "occurrences": sum(group["occurrences"] for group in groups),
+        "checked_ids": sum(group["checked_ids"] for group in groups),
+        "present_ids": sum(group["present_ids"] for group in groups),
+        "absent_ids": sum(group["absent_ids"] for group in groups),
+        "affected_adapters": sum(group["absent_ids"] > 0 for group in groups),
     }
 
 
@@ -10680,16 +10701,16 @@ async def build_status_page(request: Request, db_name: str):
 async def build_diagnostics_page(request: Request, db_name: str, run_id: str = "", kind: str = "",
                                  adapter: str = "", node_type: str = "", endpoint_role: str = "",
                                  after: str = "", view: str = "", id_prefix: str = "",
-                                 edge_collection: str = ""):
+                                 edge_collection: str = "", final_node_presence: str = ""):
     db = get_db(db_name)
     build_status = _get_build_status(db)
     selected_run_id = run_id or ((build_status or {}).get("run_id") or "")
     diagnostics = _get_build_diagnostics(
         db, selected_run_id, kind, adapter, node_type, endpoint_role, after,
-        id_prefix, edge_collection,
+        id_prefix, edge_collection, final_node_presence,
     )
     selected_view = view if view in {"unmatched", "dangling", "records"} else (
-        "records" if any((kind, adapter, node_type, endpoint_role, after, id_prefix, edge_collection))
+        "records" if any((kind, adapter, node_type, endpoint_role, after, id_prefix, edge_collection, final_node_presence))
         else "unmatched"
     )
     unmatched_summary = (
@@ -10714,7 +10735,7 @@ async def build_diagnostics_page(request: Request, db_name: str, run_id: str = "
         "selected_view": selected_view, "unmatched_summary": unmatched_summary,
         "dangling_summary": dangling_summary, "tab_queries": tab_queries,
         "record_query": record_query, "id_prefix": id_prefix,
-        "edge_collection": edge_collection,
+        "edge_collection": edge_collection, "final_node_presence": final_node_presence,
     })
 
 
