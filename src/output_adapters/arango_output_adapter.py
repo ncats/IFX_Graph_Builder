@@ -975,6 +975,7 @@ class ArangoOutputAdapter(OutputAdapter, ArangoAdapter):
                 "source_id": issue["source_id"],
                 "endpoint_role": issue["endpoint_role"],
                 "occurrences": issue["occurrences"],
+                "resolver_outcome": issue.get("resolver_outcome", "unknown"),
                 "last_seen_at": now,
             })
         for start in range(0, len(records), 1000):
@@ -1023,6 +1024,7 @@ class ArangoOutputAdapter(OutputAdapter, ArangoAdapter):
 
     def finish_build_diagnostics(self, run_id: str) -> None:
         self._reconcile_observed_dangling_edges(run_id)
+        self._reconcile_unmatched_node_presence(run_id)
         counts = self.get_db().aql.execute(
             """
             FOR d IN build_diagnostics
@@ -1048,6 +1050,58 @@ class ArangoOutputAdapter(OutputAdapter, ArangoAdapter):
             overwrite=True,
         )
         print(f"Build diagnostics: {self.BUILD_DIAGNOSTICS_COLLECTION} {summary}")
+
+    def _reconcile_unmatched_node_presence(self, run_id: str) -> None:
+        """Record whether each unmatched raw ID exists as a node after cleanup."""
+        db = self.get_db()
+        cursor = db.aql.execute(
+            "FOR d IN build_diagnostics FILTER d.run_id == @run_id AND d.kind == 'unmatched_id' "
+            "RETURN KEEP(d, '_key', 'node_type', 'source_id')",
+            bind_vars={"run_id": run_id},
+            batch_size=1000,
+            max_runtime=600,
+        )
+        collection_exists = {}
+        pending = []
+
+        def flush() -> None:
+            if not pending:
+                return
+            handles = list(dict.fromkeys(
+                f"{issue['node_type']}/{self.safe_key(issue['source_id'])}"
+                for issue in pending
+                if collection_exists[issue["node_type"]]
+            ))
+            present = {}
+            for start in range(0, len(handles), 1000):
+                rows = db.aql.execute(
+                    "FOR handle IN @handles RETURN {handle, present: DOCUMENT(handle) != null}",
+                    bind_vars={"handles": handles[start:start + 1000]},
+                    max_runtime=600,
+                )
+                present.update({row["handle"]: row["present"] for row in rows})
+            updates = [{
+                "_key": issue["_key"],
+                "final_node_present": present.get(
+                    f"{issue['node_type']}/{self.safe_key(issue['source_id'])}", False
+                ),
+            } for issue in pending]
+            db.aql.execute(
+                "FOR item IN @updates UPDATE item._key WITH "
+                "{final_node_present: item.final_node_present} IN build_diagnostics",
+                bind_vars={"updates": updates},
+                max_runtime=600,
+            )
+            pending.clear()
+
+        for issue in cursor:
+            node_type = issue["node_type"]
+            if node_type not in collection_exists:
+                collection_exists[node_type] = db.has_collection(node_type)
+            pending.append(issue)
+            if len(pending) == 1000:
+                flush()
+        flush()
 
     def _reconcile_observed_dangling_edges(self, run_id: str) -> None:
         db = self.get_db()

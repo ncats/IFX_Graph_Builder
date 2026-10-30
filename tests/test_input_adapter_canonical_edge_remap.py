@@ -1,5 +1,7 @@
 from typing import Dict, List
 
+import pytest
+
 from src.constants import DataSourceName
 from src.interfaces.id_resolver import IdResolver, IdMatch, NoMatchBehavior, MultiMatchBehavior
 from src.interfaces.input_adapter import InputAdapter
@@ -132,10 +134,76 @@ def test_unmatched_reporter_records_raw_nodes_and_edge_endpoints():
     list(adapter.get_resolved_and_provenanced_list(resolvers))
 
     assert issues == [
-        {"node_type": "Gene", "source_id": "Gene:MISSING", "endpoint_role": "node", "occurrences": 2},
-        {"node_type": "Gene", "source_id": "Gene:MISSING", "endpoint_role": "start", "occurrences": 2},
-        {"node_type": "Pathway", "source_id": "Pathway:MISSING", "endpoint_role": "end", "occurrences": 1},
+        {"node_type": "Gene", "source_id": "Gene:MISSING", "endpoint_role": "node", "occurrences": 2, "resolver_outcome": "skipped"},
+        {"node_type": "Gene", "source_id": "Gene:MISSING", "endpoint_role": "start", "occurrences": 2, "resolver_outcome": "skipped"},
+        {"node_type": "Pathway", "source_id": "Pathway:MISSING", "endpoint_role": "end", "occurrences": 1, "resolver_outcome": "skipped"},
     ]
+
+
+def test_unmatched_reporter_records_allowed_and_prefix_filtered_ids():
+    class _NoMatchesResolver(IdResolver):
+        def resolve_internal(self, input_nodes):
+            return {}
+
+        def parse_flat_node_list_from_map(self, entity_map):
+            filtered = dict(entity_map)
+            filtered[self.MatchKeys.unmatched] = {
+                source_id: node for source_id, node in entity_map[self.MatchKeys.unmatched].items()
+                if source_id.startswith("IFXGene:")
+            }
+            return super().parse_flat_node_list_from_map(filtered)
+
+    adapter = _SingleBatchAdapter([Gene(id="IFXGene:1"), Gene(id="Other:2")])
+    issues = []
+    adapter.set_unmatched_reporter(issues.extend)
+    resolver = _NoMatchesResolver(types=["Gene"], no_match_behavior=NoMatchBehavior.Allow)
+
+    list(adapter.get_resolved_and_provenanced_list({"Gene": resolver}))
+
+    assert [(issue["source_id"], issue["resolver_outcome"]) for issue in issues] == [
+        ("IFXGene:1", "allowed"), ("Other:2", "skipped"),
+    ]
+
+
+def test_allowed_unmatched_endpoint_does_not_imply_edge_was_emitted():
+    class _NoMatchesResolver(IdResolver):
+        def resolve_internal(self, input_nodes):
+            return {}
+
+    edge = GenePathwayEdge(
+        start_node=Gene(id="Gene:ALLOWED"),
+        end_node=Pathway(id="Pathway:SKIPPED"),
+    )
+    adapter = _SingleBatchAdapter([edge])
+    issues = []
+    adapter.set_unmatched_reporter(issues.extend)
+    resolvers = {
+        "Gene": _NoMatchesResolver(types=["Gene"], no_match_behavior=NoMatchBehavior.Allow),
+        "Pathway": _NoMatchesResolver(types=["Pathway"], no_match_behavior=NoMatchBehavior.Skip),
+    }
+
+    batches = list(adapter.get_resolved_and_provenanced_list(resolvers))
+
+    assert not any(isinstance(item, GenePathwayEdge) for batch in batches for item in batch)
+    assert {(issue["source_id"], issue["resolver_outcome"]) for issue in issues} == {
+        ("Gene:ALLOWED", "allowed"), ("Pathway:SKIPPED", "skipped"),
+    }
+
+
+def test_unmatched_reporter_records_error_when_resolver_rejects_miss():
+    class _NoMatchesResolver(IdResolver):
+        def resolve_internal(self, input_nodes):
+            return {}
+
+    adapter = _SingleBatchAdapter([Gene(id="Gene:MISSING")])
+    issues = []
+    adapter.set_unmatched_reporter(issues.extend)
+    resolver = _NoMatchesResolver(types=["Gene"], no_match_behavior=NoMatchBehavior.Error)
+
+    with pytest.raises(Exception, match="unmatched identifiers"):
+        list(adapter.get_resolved_and_provenanced_list({"Gene": resolver}))
+
+    assert issues[0]["resolver_outcome"] == "error"
 
 
 def test_input_adapter_remaps_gene_disease_edge_to_protein_edge():

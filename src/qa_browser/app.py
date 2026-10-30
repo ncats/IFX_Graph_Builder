@@ -9201,7 +9201,8 @@ def _get_build_status(db) -> Optional[dict]:
 
 
 def _get_build_diagnostics(db, run_id: str | None, kind: str = "", adapter: str = "",
-                           node_type: str = "", endpoint_role: str = "", after: str = "") -> dict:
+                           node_type: str = "", endpoint_role: str = "", after: str = "",
+                           id_prefix: str = "", edge_collection: str = "") -> dict:
     if not db.has_collection("build_diagnostics") or not run_id:
         return {"available": False, "run_id": run_id, "rows": []}
     status_doc = None
@@ -9216,6 +9217,7 @@ def _get_build_diagnostics(db, run_id: str | None, kind: str = "", adapter: str 
     bind_vars = {
         "run_id": run_id, "kind": kind, "adapter": adapter, "node_type": node_type,
         "endpoint_role": endpoint_role, "after": after,
+        "id_prefix": id_prefix, "edge_collection": edge_collection,
     }
     summary = list(db.aql.execute("""
         FOR d IN build_diagnostics
@@ -9226,10 +9228,16 @@ def _get_build_diagnostics(db, run_id: str | None, kind: str = "", adapter: str 
     rows = list(db.aql.execute("""
         FOR d IN build_diagnostics
             FILTER d.run_id == @run_id
-                AND (@kind == '' OR d.kind == @kind)
+            LET source_id = TO_STRING(d.source_id || '')
+            LET colon = FIND_FIRST(source_id, ':')
+            LET prefix = STARTS_WITH(source_id, 'http://') OR STARTS_WITH(source_id, 'https://')
+                ? 'URL' : colon > 0 ? SUBSTRING(source_id, 0, colon) : 'No prefix'
+            FILTER (@kind == '' OR d.kind == @kind)
                 AND (@adapter == '' OR d.adapter == @adapter)
                 AND (@node_type == '' OR d.node_type == @node_type)
                 AND (@endpoint_role == '' OR d.endpoint_role == @endpoint_role)
+                AND (@id_prefix == '' OR (d.kind == 'unmatched_id' AND prefix == @id_prefix))
+                AND (@edge_collection == '' OR d.edge_collection == @edge_collection)
                 AND (@after == '' OR d._key > @after)
             SORT d._key
             LIMIT 101
@@ -9239,11 +9247,92 @@ def _get_build_diagnostics(db, run_id: str | None, kind: str = "", adapter: str 
     rows = rows[:100]
     next_query = ""
     if has_next:
-        next_query = urlencode({**bind_vars, "after": rows[-1]["_key"]})
+        next_query = urlencode({**bind_vars, "after": rows[-1]["_key"], "view": "records"})
     return {
         "available": True, "run_id": run_id, "status": status_doc.get("status", "partial"),
         "updated_at": status_doc.get("updated_at"), "summary": summary, "rows": rows,
         "next_query": next_query,
+    }
+
+
+def _get_unmatched_id_summary(db, run_id: str) -> dict:
+    rows = list(db.aql.execute("""
+        FOR d IN build_diagnostics
+            FILTER d.run_id == @run_id AND d.kind == 'unmatched_id'
+            LET source_id = TO_STRING(d.source_id || '')
+            LET colon = FIND_FIRST(source_id, ':')
+            LET prefix = STARTS_WITH(source_id, 'http://') OR STARTS_WITH(source_id, 'https://')
+                ? 'URL'
+                : colon > 0 ? SUBSTRING(source_id, 0, colon) : 'No prefix'
+            COLLECT adapter = d.adapter, node_type = d.node_type,
+                    id_prefix = prefix, raw_id = source_id
+                AGGREGATE occurrences = SUM(TO_NUMBER(d.occurrences)),
+                          allowed = MAX(d.resolver_outcome == 'allowed' ? 1 : 0),
+                          skipped = MAX(d.resolver_outcome == 'skipped' ? 1 : 0),
+                          error = MAX(d.resolver_outcome == 'error' ? 1 : 0),
+                          present = MAX(d.final_node_present == true ? 1 : 0),
+                          checked = MAX(HAS(d, 'final_node_present') ? 1 : 0)
+            COLLECT bucket_adapter = adapter, bucket_node_type = node_type,
+                    bucket_prefix = id_prefix
+                AGGREGATE ids = COUNT(), total_occurrences = SUM(occurrences),
+                          allowed_ids = SUM(allowed), skipped_ids = SUM(skipped),
+                          error_ids = SUM(error),
+                          present_ids = SUM(present), checked_ids = SUM(checked)
+            SORT ids DESC, bucket_adapter, bucket_node_type, bucket_prefix
+            RETURN {adapter: bucket_adapter, node_type: bucket_node_type,
+                    prefix: bucket_prefix, ids, occurrences: total_occurrences,
+                    allowed_ids, skipped_ids, error_ids, present_ids, checked_ids}
+    """, bind_vars={"run_id": run_id}, max_runtime=120))
+    adapters = {}
+    for row in rows:
+        adapter = row["adapter"]
+        group = adapters.setdefault(adapter, {
+            "adapter": adapter, "ids": 0, "occurrences": 0,
+            "allowed_ids": 0, "skipped_ids": 0, "error_ids": 0,
+            "present_ids": 0, "checked_ids": 0, "prefixes": [],
+        })
+        for key in ("ids", "occurrences", "allowed_ids", "skipped_ids", "error_ids",
+                    "present_ids", "checked_ids"):
+            group[key] += row[key]
+        group["prefixes"].append(row)
+    groups = sorted(adapters.values(), key=lambda item: (-item["ids"], item["adapter"]))
+    return {
+        "adapters": groups,
+        "ids": sum(group["ids"] for group in groups),
+        "occurrences": sum(group["occurrences"] for group in groups),
+    }
+
+
+def _get_dangling_edge_summary(db, run_id: str) -> dict:
+    rows = list(db.aql.execute("""
+        FOR d IN build_diagnostics
+            FILTER d.run_id == @run_id AND d.kind == 'dangling_edge'
+            LET from_parts = SPLIT(TO_STRING(d.from_id || ''), '/')
+            LET to_parts = SPLIT(TO_STRING(d.to_id || ''), '/')
+            LET from_key = LENGTH(from_parts) > 1 ? from_parts[1] : ''
+            LET to_key = LENGTH(to_parts) > 1 ? to_parts[1] : ''
+            LET from_colon = FIND_FIRST(from_key, ':')
+            LET to_colon = FIND_FIRST(to_key, ':')
+            LET from_prefix = STARTS_WITH(from_key, 'http:') OR STARTS_WITH(from_key, 'https:')
+                ? 'URL' : from_colon > 0 ? SUBSTRING(from_key, 0, from_colon) : 'No prefix'
+            LET to_prefix = STARTS_WITH(to_key, 'http:') OR STARTS_WITH(to_key, 'https:')
+                ? 'URL' : to_colon > 0 ? SUBSTRING(to_key, 0, to_colon) : 'No prefix'
+            LET missing_side = d.missing_from AND d.missing_to ? 'Both'
+                : d.missing_from ? 'Start' : 'End'
+            COLLECT edge_collection = d.edge_collection,
+                    from_type = from_parts[0], grouped_from_prefix = from_prefix,
+                    to_type = to_parts[0], grouped_to_prefix = to_prefix,
+                    missing = missing_side, status = d.status
+                WITH COUNT INTO count
+            SORT count DESC, edge_collection, from_type, to_type
+            RETURN {edge_collection, from_type, from_prefix: grouped_from_prefix,
+                    to_type, to_prefix: grouped_to_prefix,
+                    missing_side: missing, status, count}
+    """, bind_vars={"run_id": run_id}, max_runtime=120))
+    return {
+        "rows": rows,
+        "deleted": sum(row["count"] for row in rows if row["status"] == "deleted"),
+        "observed": sum(row["count"] for row in rows if row["status"] == "observed"),
     }
 
 
@@ -10590,15 +10679,42 @@ async def build_status_page(request: Request, db_name: str):
 @app.get("/db/{db_name}/build-diagnostics", response_class=HTMLResponse)
 async def build_diagnostics_page(request: Request, db_name: str, run_id: str = "", kind: str = "",
                                  adapter: str = "", node_type: str = "", endpoint_role: str = "",
-                                 after: str = ""):
+                                 after: str = "", view: str = "", id_prefix: str = "",
+                                 edge_collection: str = ""):
     db = get_db(db_name)
     build_status = _get_build_status(db)
     selected_run_id = run_id or ((build_status or {}).get("run_id") or "")
-    diagnostics = _get_build_diagnostics(db, selected_run_id, kind, adapter, node_type, endpoint_role, after)
+    diagnostics = _get_build_diagnostics(
+        db, selected_run_id, kind, adapter, node_type, endpoint_role, after,
+        id_prefix, edge_collection,
+    )
+    selected_view = view if view in {"unmatched", "dangling", "records"} else (
+        "records" if any((kind, adapter, node_type, endpoint_role, after, id_prefix, edge_collection))
+        else "unmatched"
+    )
+    unmatched_summary = (
+        _get_unmatched_id_summary(db, selected_run_id)
+        if diagnostics["available"] and selected_view == "unmatched" else None
+    )
+    dangling_summary = (
+        _get_dangling_edge_summary(db, selected_run_id)
+        if diagnostics["available"] and selected_view == "dangling" else None
+    )
+    tab_queries = {
+        tab: urlencode({"run_id": selected_run_id, "view": tab})
+        for tab in ("unmatched", "dangling", "records")
+    }
+    record_query = lambda **filters: urlencode({
+        "run_id": selected_run_id, "view": "records", **filters,
+    })
     return templates.TemplateResponse(request, "build_diagnostics.html", {
         "request": request, "db_name": db_name, "diagnostics": diagnostics,
         "build_status": build_status, "kind": kind, "adapter": adapter,
         "node_type": node_type, "endpoint_role": endpoint_role,
+        "selected_view": selected_view, "unmatched_summary": unmatched_summary,
+        "dangling_summary": dangling_summary, "tab_queries": tab_queries,
+        "record_query": record_query, "id_prefix": id_prefix,
+        "edge_collection": edge_collection,
     })
 
 

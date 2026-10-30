@@ -17,7 +17,7 @@
 
 {% block content %}
 <h1>{{ db_name }} Build Status</h1>
-<p><a href="{{ root_path }}/db/{{ db_name }}/build-diagnostics">View Build Diagnostics</a></p>
+<p><a href="{{ root_path }}/db/{{ db_name }}/build-diagnostics">View ID and Edge Report</a></p>
 
 {% if build_status %}
 <div class="card">
@@ -124,7 +124,7 @@
         </div>
         <p class="subtle" style="margin-bottom:0.75rem">
             Run: <span class="mono">{{ run.run_id }}</span>
-            · <a href="{{ root_path }}/db/{{ db_name }}/build-diagnostics?run_id={{ run.run_id|urlencode }}">Diagnostics</a>
+            · <a href="{{ root_path }}/db/{{ db_name }}/build-diagnostics?run_id={{ run.run_id|urlencode }}">ID and Edge Report</a>
             {% if run.last_updated %}
             · Updated {{ run.last_updated }}
             {% endif %}

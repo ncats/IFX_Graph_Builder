@@ -18,7 +18,8 @@ class InputAdapter(ABC):
     def set_unmatched_reporter(self, reporter):
         self._unmatched_reporter = reporter
 
-    def _report_unmatched(self, node_type: str, role: str, counts: Counter, unmatched: dict):
+    def _report_unmatched(self, node_type: str, role: str, counts: Counter,
+                          unmatched: dict, allowed_ids: set[str], error: bool = False):
         reporter = getattr(self, "_unmatched_reporter", None)
         if reporter and unmatched:
             reporter([
@@ -27,6 +28,9 @@ class InputAdapter(ABC):
                     "source_id": source_id,
                     "endpoint_role": role,
                     "occurrences": counts[source_id],
+                    "resolver_outcome": (
+                        "error" if error else "allowed" if source_id in allowed_ids else "skipped"
+                    ),
                 }
                 for source_id in unmatched
                 if counts[source_id]
@@ -143,11 +147,25 @@ class InputAdapter(ABC):
                         resolver = resolver_map[type]
                         allow_retype = resolver.canonical_class is not None
                         entity_map = resolver.resolve_nodes(node_list, allow_retype=allow_retype)
+                        unmatched = entity_map[IdResolver.MatchKeys.unmatched]
+                        try:
+                            parsed_nodes = resolver.parse_flat_node_list_from_map(entity_map)
+                        except Exception:
+                            self._report_unmatched(
+                                type, "node", Counter(node.id for node in node_list),
+                                unmatched, set(), error=True,
+                            )
+                            raise
+                        allowed_objects = {id(node) for node in parsed_nodes}
+                        allowed_ids = {
+                            source_id for source_id, node in unmatched.items()
+                            if id(node) in allowed_objects
+                        }
                         self._report_unmatched(
                             type, "node", Counter(node.id for node in node_list),
-                            entity_map[IdResolver.MatchKeys.unmatched],
+                            unmatched, allowed_ids,
                         )
-                        resolved_nodes.extend(resolver.parse_flat_node_list_from_map(entity_map))
+                        resolved_nodes.extend(parsed_nodes)
                     else:
                         resolved_nodes.extend(node_list)
                 nodes = resolved_nodes
@@ -182,15 +200,35 @@ class InputAdapter(ABC):
                         resolver = resolver_map[type]
                         temp_node_map = resolver.resolve_nodes(type_map[type], allow_retype=True)
                         unmatched = temp_node_map[IdResolver.MatchKeys.unmatched]
+                        try:
+                            parsed_node_map = resolver.parse_entity_map(temp_node_map)
+                        except Exception:
+                            self._report_unmatched(
+                                type, "start", Counter({source_id: start_counts[(type, source_id)] for source_id in unmatched}),
+                                unmatched, set(), error=True,
+                            )
+                            self._report_unmatched(
+                                type, "end", Counter({source_id: end_counts[(type, source_id)] for source_id in unmatched}),
+                                unmatched, set(), error=True,
+                            )
+                            raise
+                        allowed_objects = {
+                            id(node)
+                            for resolved_nodes in parsed_node_map.values()
+                            for node in resolved_nodes
+                        }
+                        allowed_ids = {
+                            source_id for source_id, node in unmatched.items()
+                            if id(node) in allowed_objects
+                        }
                         self._report_unmatched(
                             type, "start", Counter({source_id: start_counts[(type, source_id)] for source_id in unmatched}),
-                            unmatched,
+                            unmatched, allowed_ids,
                         )
                         self._report_unmatched(
                             type, "end", Counter({source_id: end_counts[(type, source_id)] for source_id in unmatched}),
-                            unmatched,
+                            unmatched, allowed_ids,
                         )
-                        parsed_node_map = resolver.parse_entity_map(temp_node_map)
                         for original_id, resolved_nodes in parsed_node_map.items():
                             node_map[(type, original_id)] = resolved_nodes
 

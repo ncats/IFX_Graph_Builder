@@ -1,6 +1,9 @@
 from datetime import datetime
 
-from src.qa_browser.app import _get_build_status, _get_build_diagnostics, _summarize_attempts, _summarize_checkpoint
+from src.qa_browser.app import (
+    _get_build_status, _get_build_diagnostics, _get_dangling_edge_summary,
+    _get_unmatched_id_summary, _summarize_attempts, _summarize_checkpoint,
+)
 
 
 def _checkpoint():
@@ -154,6 +157,41 @@ def test_diagnostics_page_query_is_bounded_and_scoped_to_run():
     assert result["next_query"]
     assert all(call[1]["run_id"] == "run.yaml" for call in calls)
     assert calls[-1][1]["adapter"] == "input:X"
+
+
+def test_diagnostic_summaries_cover_whole_run_and_keep_distinct_counts():
+    queries = []
+
+    class AQL:
+        def execute(self, query, bind_vars, **kwargs):
+            queries.append((query, bind_vars))
+            if "kind == 'unmatched_id'" in query:
+                return [
+                    {"adapter": "input:A", "node_type": "Protein", "prefix": "UniProtKB",
+                     "ids": 2, "occurrences": 9, "allowed_ids": 1, "skipped_ids": 1,
+                     "error_ids": 0, "present_ids": 1, "checked_ids": 2},
+                    {"adapter": "input:A", "node_type": "Protein", "prefix": "No prefix",
+                     "ids": 1, "occurrences": 2, "allowed_ids": 0, "skipped_ids": 0,
+                     "error_ids": 0, "present_ids": 0, "checked_ids": 0},
+                ]
+            return [
+                {"edge_collection": "ProteinGoTermEdge", "from_type": "Protein",
+                 "from_prefix": "IFXProtein", "to_type": "GoTerm", "to_prefix": "GO",
+                 "missing_side": "End", "status": "deleted", "count": 5},
+            ]
+
+    db = type("DB", (), {"aql": AQL()})()
+    unmatched = _get_unmatched_id_summary(db, "run.yaml")
+    dangling = _get_dangling_edge_summary(db, "run.yaml")
+
+    assert unmatched["ids"] == 3
+    assert unmatched["occurrences"] == 11
+    assert unmatched["adapters"][0]["allowed_ids"] == 1
+    assert unmatched["adapters"][0]["prefixes"][1]["prefix"] == "No prefix"
+    assert dangling["deleted"] == 5
+    assert dangling["observed"] == 0
+    assert all(bind_vars == {"run_id": "run.yaml"} for _, bind_vars in queries)
+    assert all("LIMIT 101" not in query for query, _ in queries)
 
 
 def test_failed_cleanup_attempt_overrides_completed_adapter_status():

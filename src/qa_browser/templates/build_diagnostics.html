@@ -1,54 +1,132 @@
 {% extends "base.html" %}
-{% block title %}{{ db_name }} Build Diagnostics - QA Browser{% endblock %}
+{% block title %}{{ db_name }} ID and Edge Report - QA Browser{% endblock %}
 {% block breadcrumb %}
 <span class="sep">/</span><a href="{{ root_path }}/qa-browser">QA Browser</a>
 <span class="sep">/</span><a href="{{ root_path }}/db/{{ db_name }}">{{ db_name }}</a>
-<span class="sep">/</span><span>Build Diagnostics</span>
+<span class="sep">/</span><span>ID and Edge Report</span>
 {% endblock %}
 {% block content %}
-<h1>{{ db_name }} Build Diagnostics</h1>
+<h1>{{ db_name }} ID and Edge Report</h1>
 <p><a href="{{ root_path }}/db/{{ db_name }}/build-status">Build Status</a></p>
 {% if diagnostics.available %}
 <div class="card">
     <p><strong>Run:</strong> <span class="mono">{{ diagnostics.run_id }}</span>
        · <span class="badge {% if diagnostics.status == 'complete' %}badge-success{% else %}badge-running{% endif %}">{{ diagnostics.status }}</span>
        {% if diagnostics.updated_at %} · Updated {{ diagnostics.updated_at }}{% endif %}</p>
-    <div class="build-summary-row">
-        {% for item in diagnostics.summary %}
-        <div class="build-stat"><div class="value">{{ "{:,}".format(item.count) }}</div>
-            <div class="label">{{ item.kind.replace('_', ' ') }}{% if item.status %} · {{ item.status }}{% endif %}</div></div>
-        {% endfor %}
-    </div>
-    <form method="get">
-        <input type="hidden" name="run_id" value="{{ diagnostics.run_id }}">
-        <label>Kind <select name="kind"><option value="">All</option>
-            <option value="unmatched_id" {% if kind == 'unmatched_id' %}selected{% endif %}>Unmatched IDs</option>
-            <option value="dangling_edge" {% if kind == 'dangling_edge' %}selected{% endif %}>Deleted dangling edges</option>
-        </select></label>
-        <label>Adapter <input name="adapter" value="{{ adapter }}" placeholder="input:AdapterName"></label>
-        <label>Node type <input name="node_type" value="{{ node_type }}" placeholder="Protein"></label>
-        <label>Role <select name="endpoint_role"><option value="">All</option>
-            {% for role in ['node', 'start', 'end'] %}<option value="{{ role }}" {% if endpoint_role == role %}selected{% endif %}>{{ role }}</option>{% endfor %}
-        </select></label>
-        <button type="submit">Filter</button>
-    </form>
-    {% if diagnostics.rows %}
-    <table><thead><tr><th>Kind</th><th>Adapter / collection</th><th>Type / role</th><th>Raw ID / edge</th><th>Details</th></tr></thead><tbody>
-    {% for row in diagnostics.rows %}<tr>
-        <td>{{ row.kind.replace('_', ' ') }}</td>
-        {% if row.kind == 'unmatched_id' %}
-        <td>{{ row.adapter }}</td><td>{{ row.node_type }} · {{ row.endpoint_role }}</td>
-        <td class="mono">{{ row.source_id }}</td><td>{{ "{:,}".format(row.occurrences) }} occurrence{% if row.occurrences != 1 %}s{% endif %}</td>
-        {% else %}
-        <td>{{ row.edge_collection }}</td><td>Missing {% if row.missing_from %}start{% endif %}{% if row.missing_from and row.missing_to %} and {% endif %}{% if row.missing_to %}end{% endif %}</td>
-        <td class="mono">{{ row.edge_key }}</td><td class="mono">{{ row.from_id }} → {{ row.to_id }} · {{ row.status }}</td>
-        {% endif %}
-    </tr>{% endfor %}
-    </tbody></table>
-    {% if diagnostics.next_query %}<p><a href="{{ root_path }}/db/{{ db_name }}/build-diagnostics?{{ diagnostics.next_query }}">Next 100 →</a></p>{% endif %}
-    {% else %}<p>No diagnostics match these filters.</p>{% endif %}
+    {% if diagnostics.status != 'complete' %}<p class="subtle">This run is incomplete; counts below are recorded so far.</p>{% endif %}
+    <nav class="report-tabs" aria-label="ID and edge report views">
+        <a href="{{ root_path }}/db/{{ db_name }}/build-diagnostics?{{ tab_queries.unmatched }}" class="report-tab{% if selected_view == 'unmatched' %} active{% endif %}"{% if selected_view == 'unmatched' %} aria-current="page"{% endif %}>Unmatched IDs</a>
+        <a href="{{ root_path }}/db/{{ db_name }}/build-diagnostics?{{ tab_queries.dangling }}" class="report-tab{% if selected_view == 'dangling' %} active{% endif %}"{% if selected_view == 'dangling' %} aria-current="page"{% endif %}>Dangling edges</a>
+        <a href="{{ root_path }}/db/{{ db_name }}/build-diagnostics?{{ tab_queries.records }}" class="report-tab{% if selected_view == 'records' %} active{% endif %}"{% if selected_view == 'records' %} aria-current="page"{% endif %}>All records</a>
+    </nav>
+
+    {% if selected_view == 'unmatched' %}
+        <p class="subtle">Run-wide counts. “Allowed by resolver” means the ID passed its resolver policy; an edge using it may still be dropped if its other endpoint is skipped. Final node presence is checked only after a completed build and does not prove an edge survived.</p>
+        {% if unmatched_summary.adapters %}
+        <div class="build-summary-row">
+            <div class="build-stat"><div class="value">{{ "{:,}".format(unmatched_summary.ids) }}</div><div class="label">Distinct ID/type pairs across adapters</div></div>
+            <div class="build-stat"><div class="value">{{ "{:,}".format(unmatched_summary.occurrences) }}</div><div class="label">Occurrences</div></div>
+        </div>
+        <table>
+            <thead><tr><th>Adapter</th><th>IDs</th><th>Occurrences</th><th>Allowed by resolver</th><th>Skipped / errors</th><th>Final nodes present</th></tr></thead>
+            <tbody>
+            {% for group in unmatched_summary.adapters %}
+                <tr>
+                    <td><a href="{{ root_path }}/db/{{ db_name }}/build-diagnostics?{{ record_query(kind='unmatched_id', adapter=group.adapter) }}">{{ group.adapter }}</a></td>
+                    <td>{{ "{:,}".format(group.ids) }}</td>
+                    <td>{{ "{:,}".format(group.occurrences) }}</td>
+                    <td>{{ "{:,}".format(group.allowed_ids) }}</td>
+                    <td>{{ "{:,}".format(group.skipped_ids) }} skipped{% if group.error_ids %} · {{ "{:,}".format(group.error_ids) }} errors{% endif %}{% if group.ids > group.allowed_ids + group.skipped_ids + group.error_ids %}<span class="subtle"> · {{ group.ids - group.allowed_ids - group.skipped_ids - group.error_ids }} unknown</span>{% endif %}</td>
+                    <td>{% if group.checked_ids %}{{ "{:,}".format(group.present_ids) }} / {{ "{:,}".format(group.checked_ids) }} checked{% else %}<span class="subtle">Not checked</span>{% endif %}</td>
+                </tr>
+                <tr><td colspan="6">
+                    <details><summary>Prefixes and node types for {{ group.adapter }}</summary>
+                        <table><thead><tr><th>Node type</th><th>ID prefix</th><th>IDs</th><th>Occurrences</th><th>Allowed by resolver</th><th>Skipped / errors</th><th>Final nodes present</th></tr></thead><tbody>
+                        {% for row in group.prefixes %}
+                        <tr>
+                            <td>{{ row.node_type }}</td>
+                            <td><a href="{{ root_path }}/db/{{ db_name }}/build-diagnostics?{{ record_query(kind='unmatched_id', adapter=group.adapter, node_type=row.node_type, id_prefix=row.prefix) }}">{{ row.prefix }}</a></td>
+                            <td>{{ "{:,}".format(row.ids) }}</td>
+                            <td>{{ "{:,}".format(row.occurrences) }}</td>
+                            <td>{{ "{:,}".format(row.allowed_ids) }}</td>
+                            <td>{{ "{:,}".format(row.skipped_ids) }} skipped{% if row.error_ids %} · {{ "{:,}".format(row.error_ids) }} errors{% endif %}{% if row.ids > row.allowed_ids + row.skipped_ids + row.error_ids %} · {{ row.ids - row.allowed_ids - row.skipped_ids - row.error_ids }} unknown{% endif %}</td>
+                            <td>{% if row.checked_ids %}{{ "{:,}".format(row.present_ids) }} / {{ "{:,}".format(row.checked_ids) }}{% else %}<span class="subtle">Not checked</span>{% endif %}</td>
+                        </tr>
+                        {% endfor %}
+                        </tbody></table>
+                    </details>
+                </td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}<p>No unmatched IDs recorded for this run.</p>{% endif %}
+
+    {% elif selected_view == 'dangling' %}
+        <p class="subtle">Run-wide counts of edges whose endpoint node was missing. Endpoint types are graph collections; ID prefixes come from the stored endpoint handles.</p>
+        <div class="build-summary-row">
+            <div class="build-stat"><div class="value">{{ "{:,}".format(dangling_summary.deleted) }}</div><div class="label">Deleted edges</div></div>
+            <div class="build-stat"><div class="value">{{ "{:,}".format(dangling_summary.observed) }}</div><div class="label">Observed, deletion unconfirmed</div></div>
+        </div>
+        {% if dangling_summary.rows %}
+        <table>
+            <thead><tr><th>Edge collection</th><th>Start type / ID prefix</th><th>End type / ID prefix</th><th>Missing side</th><th>Status</th><th>Edges</th></tr></thead>
+            <tbody>{% for row in dangling_summary.rows %}<tr>
+                <td><a href="{{ root_path }}/db/{{ db_name }}/build-diagnostics?{{ record_query(kind='dangling_edge', edge_collection=row.edge_collection) }}">{{ row.edge_collection }}</a></td>
+                <td>{{ row.from_type }} · {{ row.from_prefix }}</td>
+                <td>{{ row.to_type }} · {{ row.to_prefix }}</td>
+                <td>{{ row.missing_side }}</td>
+                <td>{{ row.status }}</td>
+                <td>{{ "{:,}".format(row.count) }}</td>
+            </tr>{% endfor %}</tbody>
+        </table>
+        {% else %}<p>No dangling edges recorded for this run.</p>{% endif %}
+
+    {% else %}
+        <p class="subtle">Individual diagnostic records for this run. Filters and pages apply only to this tab.</p>
+        <div class="build-summary-row">
+            {% for item in diagnostics.summary %}
+            <div class="build-stat"><div class="value">{{ "{:,}".format(item.count) }}</div>
+                <div class="label">{{ item.kind.replace('_', ' ') }}{% if item.status %} · {{ item.status }}{% endif %}</div></div>
+            {% endfor %}
+        </div>
+        <form method="get">
+            <input type="hidden" name="run_id" value="{{ diagnostics.run_id }}">
+            <input type="hidden" name="view" value="records">
+            <label>Kind <select name="kind"><option value="">All</option>
+                <option value="unmatched_id" {% if kind == 'unmatched_id' %}selected{% endif %}>Unmatched IDs</option>
+                <option value="dangling_edge" {% if kind == 'dangling_edge' %}selected{% endif %}>Deleted dangling edges</option>
+            </select></label>
+            <label>Adapter <input name="adapter" value="{{ adapter }}" placeholder="input:AdapterName"></label>
+            <label>Node type <input name="node_type" value="{{ node_type }}" placeholder="Protein"></label>
+            <label>ID prefix <input name="id_prefix" value="{{ id_prefix }}" placeholder="UniProtKB"></label>
+            <label>Edge collection <input name="edge_collection" value="{{ edge_collection }}" placeholder="ProteinGoTermEdge"></label>
+            <label>Role <select name="endpoint_role"><option value="">All</option>
+                {% for role in ['node', 'start', 'end'] %}<option value="{{ role }}" {% if endpoint_role == role %}selected{% endif %}>{{ role }}</option>{% endfor %}
+            </select></label>
+            <button type="submit">Filter</button>
+        </form>
+        {% if diagnostics.rows %}
+        <table><thead><tr><th>Kind</th><th>Adapter / collection</th><th>Type / role</th><th>Raw ID / edge</th><th>Details</th></tr></thead><tbody>
+        {% for row in diagnostics.rows %}<tr>
+            <td>{{ row.kind.replace('_', ' ') }}</td>
+            {% if row.kind == 'unmatched_id' %}
+            <td>{{ row.adapter }}</td><td>{{ row.node_type }} · {{ row.endpoint_role }}</td>
+            <td class="mono">{{ row.source_id }}</td>
+            <td>{{ "{:,}".format(row.occurrences) }} occurrence{% if row.occurrences != 1 %}s{% endif %}
+                · Resolver: {{ row.resolver_outcome or 'unknown' }}
+                · Final node: {% if row.final_node_present is sameas true %}present{% elif row.final_node_present is sameas false %}absent{% else %}not checked{% endif %}
+            </td>
+            {% else %}
+            <td>{{ row.edge_collection }}</td><td>Missing {% if row.missing_from %}start{% endif %}{% if row.missing_from and row.missing_to %} and {% endif %}{% if row.missing_to %}end{% endif %}</td>
+            <td class="mono">{{ row.edge_key }}</td><td class="mono">{{ row.from_id }} → {{ row.to_id }} · {{ row.status }}</td>
+            {% endif %}
+        </tr>{% endfor %}
+        </tbody></table>
+        {% if diagnostics.next_query %}<p><a href="{{ root_path }}/db/{{ db_name }}/build-diagnostics?{{ diagnostics.next_query }}">Next 100 →</a></p>{% endif %}
+        {% else %}<p>No diagnostics match these filters.</p>{% endif %}
+    {% endif %}
 </div>
 {% else %}
-<div class="card"><p>No diagnostics were recorded for this run. Earlier builds did not retain unmatched IDs or deleted edges.</p></div>
+<div class="card"><p>No diagnostic records were recorded for this run. Earlier builds did not retain unmatched IDs or deleted edges.</p></div>
 {% endif %}
 {% endblock %}

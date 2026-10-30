@@ -1010,7 +1010,8 @@ def test_unmatched_diagnostics_keep_raw_id_and_role(monkeypatch):
 
     adapter.record_unmatched_ids(
         "pharos.yaml", "input:ExampleAdapter", "input",
-        [{"node_type": "Protein", "source_id": "UniProtKB:P12345", "endpoint_role": "start", "occurrences": 3}],
+        [{"node_type": "Protein", "source_id": "UniProtKB:P12345", "endpoint_role": "start", "occurrences": 3,
+          "resolver_outcome": "allowed"}],
     )
 
     record = calls[0][1]["bind_vars"]["issues"][0]
@@ -1018,7 +1019,41 @@ def test_unmatched_diagnostics_keep_raw_id_and_role(monkeypatch):
     assert record["endpoint_role"] == "start"
     assert record["occurrences"] == 3
     assert record["adapter"] == "input:ExampleAdapter"
+    assert record["resolver_outcome"] == "allowed"
     assert "OLD.occurrences + issue.occurrences" in calls[0][0]
+
+
+def test_unmatched_final_node_presence_checks_graph_after_cleanup():
+    updates = []
+    issues = [
+        {"_key": "one", "node_type": "Protein", "source_id": "UniProtKB:P12345"},
+        {"_key": "two", "node_type": "Protein", "source_id": "UniProtKB:ABSENT"},
+        {"_key": "three", "node_type": "MissingType", "source_id": "X:1"},
+    ]
+
+    class Aql:
+        def execute(self, query, bind_vars=None, **kwargs):
+            if "RETURN KEEP(d" in query:
+                return issues
+            if "DOCUMENT(handle)" in query:
+                return [
+                    {"handle": handle, "present": handle == "Protein/UniProtKB:P12345"}
+                    for handle in bind_vars["handles"]
+                ]
+            updates.extend(bind_vars["updates"])
+            return []
+
+    db = SimpleNamespace(aql=Aql(), has_collection=lambda name: name == "Protein")
+    adapter = ArangoOutputAdapter.__new__(ArangoOutputAdapter)
+    adapter.get_db = lambda: db
+
+    adapter._reconcile_unmatched_node_presence("run.yaml")
+
+    assert updates == [
+        {"_key": "one", "final_node_present": True},
+        {"_key": "two", "final_node_present": False},
+        {"_key": "three", "final_node_present": False},
+    ]
 
 
 def test_cleanup_records_deleted_edge_only_after_successful_remove():

@@ -315,6 +315,38 @@ td.mono { font-family: var(--mono); font-size: 12px; }
     letter-spacing: 0.05em;
 }
 
+.report-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    border-bottom: 1px solid var(--border);
+    margin: 1rem 0;
+}
+
+.report-tab {
+    display: inline-block;
+    padding: 0.55rem 0.8rem;
+    border-bottom: 2px solid transparent;
+    color: var(--text-muted);
+    text-decoration: none;
+}
+
+.report-tab:hover,
+.report-tab:focus-visible {
+    color: var(--accent);
+}
+
+.report-tab:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+.report-tab.active {
+    border-bottom-color: var(--accent);
+    color: var(--accent);
+    font-weight: 600;
+}
+
 /* Pagination */
 .pagination {
     display: flex;
