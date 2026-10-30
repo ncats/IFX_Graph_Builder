@@ -73,6 +73,43 @@ def test_build_status_waits_for_final_metadata_and_ignores_older_failure():
     assert _get_build_status(db)["runs"][0]["status"] == "completed"
 
 
+def test_completed_attempt_overrides_later_checkpoint_timestamp():
+    checkpoint = _checkpoint()
+    for adapter in checkpoint["adapters"].values():
+        adapter["status"] = "completed"
+    checkpoint["attempts"] = [{
+        "status": "completed", "started_at": "2026-10-23T13:00:00+00:00",
+        "ended_at": "2026-10-23T14:00:00+00:00",
+    }]
+
+    class AQL:
+        metadata = {
+            "run_date": "2026-10-23T13:59:00+00:00",
+            "source_yaml": checkpoint["run_id"],
+        }
+
+        def execute(self, query):
+            return [checkpoint] if "etl_checkpoint" in query else [self.metadata]
+
+    class DB:
+        aql = AQL()
+
+        def has_collection(self, name):
+            return name == "metadata_store"
+
+    db = DB()
+    status = _get_build_status(db)
+    assert status["overall_status"] == "completed"
+    assert status["runs"][0]["status"] == "completed"
+    assert status["is_active"] is False
+    assert status["etl_run_date"] == "2026-10-23T13:59:00+00:00"
+
+    db.aql.metadata = None
+    status_without_metadata = _get_build_status(db)
+    assert status_without_metadata["overall_status"] == "completed"
+    assert status_without_metadata["etl_run_date"] is None
+
+
 def test_resumed_build_timing_separates_active_pause_and_total():
     timing = _summarize_attempts([
         {"id": "first", "status": "failed", "started_at": "2026-10-24T10:00:00+00:00",

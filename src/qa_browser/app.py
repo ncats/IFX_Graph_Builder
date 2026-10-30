@@ -9147,10 +9147,12 @@ def _get_build_status(db) -> Optional[dict]:
     any_running = latest_run["running"] > 0
     latest_attempt = (latest_checkpoint.get("attempts") or [{}])[-1]
     attempt_status = latest_attempt.get("status")
+    attempt_started_dt = _parse_iso_datetime(latest_attempt.get("started_at"))
     any_partial = latest_run["completed"] > 0
+    metadata_reference_dt = attempt_started_dt or checkpoint_updated_dt
     metadata_is_current = bool(
         etl_run_dt
-        and (checkpoint_updated_dt is None or etl_run_dt >= checkpoint_updated_dt)
+        and (metadata_reference_dt is None or etl_run_dt >= metadata_reference_dt)
         and (etl_meta or {}).get("source_yaml") == latest_checkpoint.get("run_id")
     )
 
@@ -9166,7 +9168,7 @@ def _get_build_status(db) -> Optional[dict]:
         overall_status = "running"
         overall_message = "The build is still running."
         latest_run["status"] = "running"
-    elif metadata_is_current:
+    elif attempt_status == "completed" or metadata_is_current:
         overall_status = "completed"
         overall_message = "ETL and post-processing completed."
         latest_run["status"] = "completed"
