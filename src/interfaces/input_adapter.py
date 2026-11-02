@@ -18,6 +18,35 @@ class InputAdapter(ABC):
     def set_unmatched_reporter(self, reporter):
         self._unmatched_reporter = reporter
 
+    def set_id_coverage_reporter(self, reporter):
+        self._id_coverage_reporter = reporter
+
+    def _report_id_coverage(self, node_type: str, role: str, counts: Counter,
+                            targets: dict, matched_ids: set[str] | None = None,
+                            unmatched_ids: set[str] | None = None):
+        reporter = getattr(self, "_id_coverage_reporter", None)
+        if reporter is None or not counts:
+            return
+        records = []
+        for source_id, occurrences in counts.items():
+            resolved_nodes = targets.get(source_id, [])
+            if matched_ids is None:
+                outcome = "no_resolver"
+            elif source_id in matched_ids:
+                outcome = "matched"
+            elif source_id in (unmatched_ids or set()):
+                outcome = "allowed" if resolved_nodes else "skipped"
+            else:
+                raise RuntimeError(f"Resolver omitted {node_type} ID {source_id!r} from coverage")
+            records.append({
+                "node_type": node_type, "endpoint_role": role, "source_id": source_id,
+                "occurrences": occurrences, "resolver_outcome": outcome,
+                "targets": sorted({
+                    (type(node).__name__, node.id) for node in resolved_nodes
+                }),
+            })
+        reporter(records)
+
     def _report_unmatched(self, node_type: str, role: str, counts: Counter,
                           unmatched: dict, allowed_ids: set[str], error: bool = False):
         reporter = getattr(self, "_unmatched_reporter", None)
@@ -143,6 +172,7 @@ class InputAdapter(ABC):
 
                 resolved_nodes = []
                 for type, node_list in type_map.items():
+                    source_counts = Counter(node.id for node in node_list)
                     if type in resolver_map:
                         resolver = resolver_map[type]
                         allow_retype = resolver.canonical_class is not None
@@ -165,8 +195,19 @@ class InputAdapter(ABC):
                             type, "node", Counter(node.id for node in node_list),
                             unmatched, allowed_ids,
                         )
+                        targets = {}
+                        for node in parsed_nodes:
+                            targets.setdefault(getattr(node, "old_id", node.id), []).append(node)
+                        self._report_id_coverage(
+                            type, "node", source_counts, targets,
+                            set(entity_map[IdResolver.MatchKeys.matched]), set(unmatched),
+                        )
                         resolved_nodes.extend(parsed_nodes)
                     else:
+                        self._report_id_coverage(
+                            type, "node", source_counts,
+                            {node.id: [node] for node in node_list},
+                        )
                         resolved_nodes.extend(node_list)
                 nodes = resolved_nodes
 
@@ -231,6 +272,24 @@ class InputAdapter(ABC):
                         )
                         for original_id, resolved_nodes in parsed_node_map.items():
                             node_map[(type, original_id)] = resolved_nodes
+
+                        for role, counts in (
+                            ("start", Counter({source_id: count for (node_type, source_id), count in start_counts.items() if node_type == type})),
+                            ("end", Counter({source_id: count for (node_type, source_id), count in end_counts.items() if node_type == type})),
+                        ):
+                            self._report_id_coverage(
+                                type, role, counts, parsed_node_map,
+                                set(temp_node_map[IdResolver.MatchKeys.matched]), set(unmatched),
+                            )
+                    else:
+                        for role, counts in (
+                            ("start", Counter({source_id: count for (node_type, source_id), count in start_counts.items() if node_type == type})),
+                            ("end", Counter({source_id: count for (node_type, source_id), count in end_counts.items() if node_type == type})),
+                        ):
+                            self._report_id_coverage(
+                                type, role, counts,
+                                {node.id: [node] for node in type_map[type]},
+                            )
 
                 return_relationships = []
                 has_returned_batches = False

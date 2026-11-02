@@ -927,6 +927,12 @@ class ArangoOutputAdapter(OutputAdapter, ArangoAdapter):
                 bind_vars={"run_id": run_id},
                 max_runtime=600,
             )
+        store.insert({
+            "_key": f"build_diagnostics__{self.safe_key(run_id)}",
+            "type": "build_diagnostics_status", "run_id": run_id,
+            "status": "partial", "coverage_schema_version": 1,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }, overwrite=True)
 
     def _build_diagnostics_collection(self):
         db = self.get_db()
@@ -944,16 +950,22 @@ class ArangoOutputAdapter(OutputAdapter, ArangoAdapter):
     def set_build_run_id(self, run_id: str) -> None:
         self._build_run_id = run_id
         self._build_diagnostics_collection()
-        self.get_metadata_store(truncate=False).insert(
-            {
-                "_key": f"build_diagnostics__{self.safe_key(run_id)}",
-                "type": "build_diagnostics_status",
-                "run_id": run_id,
-                "status": "partial",
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            },
-            overwrite=True,
-        )
+        store = self.get_metadata_store(truncate=False)
+        key = f"build_diagnostics__{self.safe_key(run_id)}"
+        previous = store.get(key)
+        prior_checkpoint = store.get(self._checkpoint_doc_key(run_id))
+        status = {
+            "_key": key,
+            "type": "build_diagnostics_status",
+            "run_id": run_id,
+            "status": "partial",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if (previous is None and prior_checkpoint is None) or (
+            previous is not None and previous.get("coverage_schema_version") == 1
+        ):
+            status["coverage_schema_version"] = 1
+        store.insert(status, overwrite=True)
 
     def record_unmatched_ids(self, run_id: str, adapter_name: str, phase: str, issues: list[dict]) -> None:
         if not issues:
@@ -993,6 +1005,51 @@ class ArangoOutputAdapter(OutputAdapter, ArangoAdapter):
                 max_runtime=600,
             )
 
+    def record_id_coverage(self, run_id: str, adapter_name: str, phase: str,
+                           records: list[dict]) -> None:
+        if not records:
+            return
+        self._build_diagnostics_collection()
+        issues = []
+        for record in records:
+            source_id = record["source_id"]
+            colon = source_id.find(":")
+            prefix = ("URL" if source_id.startswith(("http://", "https://")) else
+                      source_id[:colon] if colon > 0 else "No prefix")
+            issues.append({
+                "_key": self._diagnostic_key([
+                    "id_coverage", run_id, adapter_name, phase, record["node_type"],
+                    record["endpoint_role"], source_id,
+                ]),
+                "schema_version": 1, "kind": "id_coverage", "run_id": run_id,
+                "adapter": adapter_name, "phase": phase,
+                "node_type": record["node_type"], "endpoint_role": record["endpoint_role"],
+                "source_id": source_id, "id_prefix": prefix,
+                "occurrences": record["occurrences"],
+                "resolver_outcome": record["resolver_outcome"],
+                "targets": [
+                    {"node_type": node_type, "id": node_id,
+                     "handle": f"{node_type}/{self.safe_key(node_id)}"}
+                    for node_type, node_id in record["targets"]
+                ],
+            })
+        for start in range(0, len(issues), 1000):
+            self.get_db().aql.execute(
+                """
+                FOR issue IN @issues
+                    UPSERT { _key: issue._key }
+                    INSERT issue
+                    UPDATE {
+                        occurrences: OLD.occurrences + issue.occurrences,
+                        targets: UNION_DISTINCT(OLD.targets, issue.targets),
+                        resolver_outcome: OLD.resolver_outcome == issue.resolver_outcome
+                            ? OLD.resolver_outcome : 'mixed'
+                    } IN build_diagnostics
+                """,
+                bind_vars={"issues": issues[start:start + 1000]},
+                max_runtime=600,
+            )
+
     def _record_dangling_edges(self, run_id: str, collection_name: str, edges: list[dict], status: str) -> None:
         if not edges:
             return
@@ -1025,6 +1082,7 @@ class ArangoOutputAdapter(OutputAdapter, ArangoAdapter):
     def finish_build_diagnostics(self, run_id: str) -> None:
         self._reconcile_observed_dangling_edges(run_id)
         self._reconcile_unmatched_node_presence(run_id)
+        self._reconcile_id_coverage_presence(run_id)
         counts = self.get_db().aql.execute(
             """
             FOR d IN build_diagnostics
@@ -1038,18 +1096,67 @@ class ArangoOutputAdapter(OutputAdapter, ArangoAdapter):
         summary = {f"{row['kind']}:{row.get('status') or 'recorded'}": row['count'] for row in counts}
         if summary.get("dangling_edge:observed", 0):
             raise RuntimeError("Build diagnostics still contain dangling edges whose deletion was not confirmed")
-        self.get_metadata_store(truncate=False).insert(
-            {
-                "_key": f"build_diagnostics__{self.safe_key(run_id)}",
-                "type": "build_diagnostics_status",
-                "run_id": run_id,
-                "status": "complete",
-                "summary": summary,
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            },
-            overwrite=True,
-        )
+        store = self.get_metadata_store(truncate=False)
+        key = f"build_diagnostics__{self.safe_key(run_id)}"
+        previous = store.get(key) or {}
+        status = {
+            "_key": key,
+            "type": "build_diagnostics_status",
+            "run_id": run_id,
+            "status": "complete",
+            "summary": summary,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if previous.get("coverage_schema_version") == 1:
+            status["coverage_schema_version"] = 1
+        store.insert(status, overwrite=True)
         print(f"Build diagnostics: {self.BUILD_DIAGNOSTICS_COLLECTION} {summary}")
+
+    def _reconcile_id_coverage_presence(self, run_id: str) -> None:
+        db = self.get_db()
+        cursor = db.aql.execute(
+            "FOR d IN build_diagnostics FILTER d.run_id == @run_id AND d.kind == 'id_coverage' "
+            "RETURN KEEP(d, '_key', 'targets')",
+            bind_vars={"run_id": run_id}, batch_size=1000, max_runtime=600,
+        )
+        pending = []
+        collection_exists = {}
+
+        def flush() -> None:
+            if not pending:
+                return
+            handles = list(dict.fromkeys(
+                target["handle"] for issue in pending for target in issue["targets"]
+                if collection_exists[target["node_type"]]
+            ))
+            present = {}
+            for start in range(0, len(handles), 1000):
+                rows = db.aql.execute(
+                    "FOR handle IN @handles RETURN {handle, present: DOCUMENT(handle) != null}",
+                    bind_vars={"handles": handles[start:start + 1000]}, max_runtime=600,
+                )
+                present.update({row["handle"]: row["present"] for row in rows})
+            updates = [{
+                "_key": issue["_key"],
+                "final_node_present": any(present.get(target["handle"], False)
+                                          for target in issue["targets"]),
+            } for issue in pending]
+            db.aql.execute(
+                "FOR item IN @updates UPDATE item._key WITH "
+                "{final_node_present: item.final_node_present} IN build_diagnostics",
+                bind_vars={"updates": updates}, max_runtime=600,
+            )
+            pending.clear()
+
+        for issue in cursor:
+            for target in issue["targets"]:
+                node_type = target["node_type"]
+                if node_type not in collection_exists:
+                    collection_exists[node_type] = db.has_collection(node_type)
+            pending.append(issue)
+            if len(pending) == 1000:
+                flush()
+        flush()
 
     def _reconcile_unmatched_node_presence(self, run_id: str) -> None:
         """Record whether each unmatched raw ID exists as a node after cleanup."""
@@ -1128,7 +1235,7 @@ class ArangoOutputAdapter(OutputAdapter, ArangoAdapter):
         self.get_db().aql.execute(
             """
             FOR d IN build_diagnostics
-                FILTER d.run_id == @run_id AND d.kind == "unmatched_id" AND d.adapter == @adapter
+                FILTER d.run_id == @run_id AND d.kind IN ["unmatched_id", "id_coverage"] AND d.adapter == @adapter
                 REMOVE d IN build_diagnostics
             """,
             bind_vars={"run_id": run_id, "adapter": adapter_name},

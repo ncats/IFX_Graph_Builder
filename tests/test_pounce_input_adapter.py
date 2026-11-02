@@ -24,6 +24,66 @@ def test_experiment_stats_pairing_keeps_missing_middle_slot():
         list(_iter_pairs(["exp1", "exp2"], ["stats2"]))
 
 
+def test_gene_matrix_without_id_mapping_fails_with_actionable_error():
+    parser = MagicMock(spec=ExcelsheetParser)
+    parser.file_path = "sc.xlsx"
+    parser.sheet_dfs = {"RawData": pd.DataFrame([{"Symbol": "TP53", "Sample1": 2}])}
+    with pytest.raises(ValueError, match="sc.xlsx / RawData.*analyte ID column"):
+        PounceNodeBuilder._prepare_data_frame(parser, "RawData", None)
+    parser.sheet_dfs["RawData"] = pd.DataFrame()
+    assert PounceNodeBuilder._prepare_data_frame(parser, "RawData", None) is None
+
+
+def test_populated_gene_meta_with_na_mapping_fails_before_silent_skip():
+    parser = MagicMock(spec=ExcelsheetParser)
+    parser.file_path = "sc.xlsx"
+    parser.sheet_dfs = {"GeneMeta": pd.DataFrame([{"Symbol": "TP53"}])}
+    parser.get_parameter_map.return_value = {"gene_id": "NA"}
+    with pytest.raises(ValueError, match="GeneMeta.*GeneMap gene_id mapping"):
+        list(PounceNodeBuilder()._parse_genes(None, parser))
+
+
+def test_all_null_matrix_id_column_has_actionable_error():
+    parser = MagicMock(spec=ExcelsheetParser)
+    parser.file_path = "sc.xlsx"
+    parser.sheet_dfs = {"RawData": pd.DataFrame([{"GeneID": None, "Sample1": 2}])}
+    with pytest.raises(ValueError, match="mapped analyte ID column 'GeneID' has no values"):
+        PounceNodeBuilder._prepare_data_frame(parser, "RawData", "GeneID")
+
+
+def test_direct_build_rejects_sc_stats_without_gene_id(monkeypatch):
+    from types import SimpleNamespace
+
+    project_data = ParsedPounceData(project=ParsedProject(project_name="P1"))
+    experiment_data = ParsedPounceData(
+        experiments=[ParsedExperiment(platform_type="sc_rnaseq")],
+    )
+    mock_parser = MagicMock()
+    mock_parser.parse_project.return_value = (project_data, [])
+    mock_parser.parse_experiment.return_value = (experiment_data, [])
+    mock_parser.parse_stats_results.return_value = (ParsedPounceData(), [])
+    stats_sheet_parser = SimpleNamespace(
+        file_path="stats.xlsx",
+        sheet_dfs={"EffectSize": pd.DataFrame([{"Symbol": "TP53"}])},
+    )
+    workbooks = {
+        "project.xlsx": SimpleNamespace(parser=SimpleNamespace()),
+        "sc.xlsx": SimpleNamespace(parser=SimpleNamespace()),
+        "stats.xlsx": SimpleNamespace(parser=stats_sheet_parser),
+    }
+    monkeypatch.setattr(
+        "src.input_adapters.pounce_sheets.pounce_node_builder.load_pounce_workbook",
+        lambda path, role: workbooks[path],
+    )
+    monkeypatch.setattr(PounceNodeBuilder, "_project_node", lambda *args, **kwargs: object())
+    monkeypatch.setattr(PounceNodeBuilder, "_person_nodes_and_edges", lambda *args: ([], []))
+    monkeypatch.setattr(PounceNodeBuilder, "_biosample_nodes", lambda *args: iter(()))
+    with pytest.raises(ValueError, match="stats.xlsx.*sc_rnaseq without gene_id"):
+        list(PounceNodeBuilder().build(
+            "project.xlsx", ["sc.xlsx"], ["stats.xlsx"], mock_parser,
+        ))
+
+
 def test_missing_stats_experiment_does_not_require_its_analyte_in_other_stats_map():
     from pathlib import Path
 

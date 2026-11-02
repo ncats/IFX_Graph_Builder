@@ -85,6 +85,8 @@ def test_remapped_expression_edges_keep_independent_copies_for_multiple_matches(
         start_node=Gene(id="G1"), end_node=Tissue(id="UBERON:0001", name="source tissue"), details=[detail]
     )
     adapter = _SingleBatchAdapter([edge])
+    coverage = []
+    adapter.set_id_coverage_reporter(coverage.extend)
     resolver = _MultiMatchResolver(
         types=["Gene"],
         no_match_behavior=NoMatchBehavior.Skip,
@@ -109,6 +111,12 @@ def test_remapped_expression_edges_keep_independent_copies_for_multiple_matches(
     assert remapped[1].start_node.id != "changed"
     assert edge.details[0].number_value == 2.0
     assert edge.start_node.id == "G1"
+    assert next(record for record in coverage if record["endpoint_role"] == "start")["targets"] == [
+        ("Protein", "IFXProtein:P1"), ("Protein", "IFXProtein:P2")
+    ]
+    assert next(record for record in coverage if record["endpoint_role"] == "end")["targets"] == [
+        ("Tissue", "UBERON:0001")
+    ]
 
 
 def test_unmatched_reporter_records_raw_nodes_and_edge_endpoints():
@@ -138,6 +146,34 @@ def test_unmatched_reporter_records_raw_nodes_and_edge_endpoints():
         {"node_type": "Gene", "source_id": "Gene:MISSING", "endpoint_role": "start", "occurrences": 2, "resolver_outcome": "skipped"},
         {"node_type": "Pathway", "source_id": "Pathway:MISSING", "endpoint_role": "end", "occurrences": 1, "resolver_outcome": "skipped"},
     ]
+
+
+def test_id_coverage_includes_matched_skipped_and_unresolved_node_ids():
+    class _KnownResolver(IdResolver):
+        def resolve_internal(self, input_nodes):
+            return {
+                node.id: [IdMatch(node.id, "IFXGene:1")]
+                for node in input_nodes if node.id == "NCBIGene:1"
+            }
+
+    adapter = _SingleBatchAdapter([
+        Gene(id="NCBIGene:1"), Gene(id="NCBIGene:1"), Gene(id="NCBIGene:2"),
+        Pathway(id="Pathway:1"),
+    ])
+    records = []
+    adapter.set_id_coverage_reporter(records.extend)
+    list(adapter.get_resolved_and_provenanced_list({
+        "Gene": _KnownResolver(types=["Gene"], no_match_behavior=NoMatchBehavior.Skip),
+    }))
+
+    by_id = {record["source_id"]: record for record in records}
+    assert by_id["NCBIGene:1"]["occurrences"] == 2
+    assert by_id["NCBIGene:1"]["resolver_outcome"] == "matched"
+    assert by_id["NCBIGene:1"]["targets"] == [("Gene", "IFXGene:1")]
+    assert by_id["NCBIGene:2"]["resolver_outcome"] == "skipped"
+    assert by_id["NCBIGene:2"]["targets"] == []
+    assert by_id["Pathway:1"]["resolver_outcome"] == "no_resolver"
+    assert by_id["Pathway:1"]["targets"] == [("Pathway", "Pathway:1")]
 
 
 def test_unmatched_reporter_records_allowed_and_prefix_filtered_ids():

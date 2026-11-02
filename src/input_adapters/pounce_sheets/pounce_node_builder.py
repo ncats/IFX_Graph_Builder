@@ -126,6 +126,10 @@ class PounceNodeBuilder:
             exp_data, _ = parser.parse_experiment(exp_parser)
             stats_parser = load_pounce_workbook(stats_file, "stats").parser if stats_file else None
             stats_data, _ = parser.parse_stats_results(stats_parser) if stats_parser else (None, [])
+            if stats_parser:
+                sc_stats_issue = PounceParser._sc_gene_stats_issue(exp_data, stats_parser)
+                if sc_stats_issue:
+                    raise ValueError(f"{stats_file}: {sc_stats_issue.message}")
             yield from self._experiment_nodes(
                 proj_obj,
                 exp_data,
@@ -358,13 +362,20 @@ class PounceNodeBuilder:
 
         sheet_names = exp_parser.sheet_dfs.keys()
         if ExperimentWorkbook.GeneMetaSheet.name in sheet_names:
-            yield from self._parse_genes(experiment_obj, exp_parser)
+            if ExperimentWorkbook.GeneMapSheet.name in sheet_names:
+                yield from self._parse_genes(experiment_obj, exp_parser)
+            elif not exp_parser.sheet_dfs[ExperimentWorkbook.GeneMetaSheet.name].empty:
+                raise ValueError(
+                    f"{exp_parser.file_path} / GeneMeta: populated gene metadata "
+                    "requires a GeneMap gene_id mapping"
+                )
         if ExperimentWorkbook.ProteinMetaSheet.name in sheet_names:
             yield from self._parse_proteins(experiment_obj, exp_parser)
         if ExperimentWorkbook.MetabMetaSheet.name in sheet_names:
             yield from self._parse_metabolites(experiment_obj, exp_parser)
         if ExperimentWorkbook.RawDataSheet.name in sheet_names:
-            gene_map = exp_parser.get_parameter_map(ExperimentWorkbook.GeneMapSheet.name)
+            gene_map = (exp_parser.get_parameter_map(ExperimentWorkbook.GeneMapSheet.name)
+                        if ExperimentWorkbook.GeneMapSheet.name in sheet_names else {})
             analyte_id_col = gene_map.get(ExperimentWorkbook.GeneMapSheet.Key.gene_id)
             yield from self._parse_data_matrix(
                 experiment_obj,
@@ -415,7 +426,8 @@ class PounceNodeBuilder:
         sheet_names = exp_parser.sheet_dfs.keys()
 
         if ExperimentWorkbook.RawDataSheet.name in sheet_names:
-            gene_map = exp_parser.get_parameter_map(ExperimentWorkbook.GeneMapSheet.name)
+            gene_map = (exp_parser.get_parameter_map(ExperimentWorkbook.GeneMapSheet.name)
+                        if ExperimentWorkbook.GeneMapSheet.name in sheet_names else {})
             analyte_id_col = gene_map.get(ExperimentWorkbook.GeneMapSheet.Key.gene_id)
             df = self._prepare_data_frame(exp_parser, ExperimentWorkbook.RawDataSheet.name, analyte_id_col)
             if df is not None:
@@ -488,6 +500,14 @@ class PounceNodeBuilder:
         gene_id_col = column_map.get(ExperimentWorkbook.GeneMapSheet.Key.gene_id)
         symbol_col = column_map.get(ExperimentWorkbook.GeneMapSheet.Key.hgnc_gene_symbol)
         biotype_col = column_map.get(ExperimentWorkbook.GeneMapSheet.Key.gene_biotype)
+
+        gene_meta = parser.sheet_dfs[ExperimentWorkbook.GeneMetaSheet.name]
+        if (not gene_meta.empty
+                and (gene_id_col in (None, "", "NA", "N/A") or gene_id_col not in gene_meta.columns)):
+            raise ValueError(
+                f"{parser.file_path} / GeneMeta: populated gene metadata "
+                "requires a GeneMap gene_id mapping to an existing column"
+            )
 
         genes = []
         gene_edges = []
@@ -598,7 +618,18 @@ class PounceNodeBuilder:
             print(f"Empty data sheet: {data_sheet}")
             return None
 
+        if analyte_id_col in (None, "", "NA", "N/A") or analyte_id_col not in raw_df.columns:
+            raise ValueError(
+                f"{parser.file_path} / {data_sheet}: a populated data matrix requires "
+                "an analyte ID column configured in its map sheet"
+            )
+
         raw_df = raw_df.dropna(axis=1, how='all')
+        if analyte_id_col not in raw_df.columns:
+            raise ValueError(
+                f"{parser.file_path} / {data_sheet}: the mapped analyte ID column "
+                f"'{analyte_id_col}' has no values"
+            )
         raw_df = raw_df.dropna(subset=[analyte_id_col])
 
         if raw_df.empty:

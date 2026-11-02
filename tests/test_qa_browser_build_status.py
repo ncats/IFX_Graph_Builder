@@ -2,6 +2,7 @@ from datetime import datetime
 
 from src.qa_browser.app import (
     _get_build_status, _get_build_diagnostics, _get_dangling_edge_summary,
+    _get_id_coverage_summary,
     _get_unmatched_id_summary, _summarize_attempts, _summarize_checkpoint,
 )
 
@@ -199,6 +200,26 @@ def test_diagnostic_summaries_cover_whole_run_and_keep_distinct_counts():
     assert dangling["observed"] == 0
     assert all(bind_vars == {"run_id": "run.yaml"} for _, bind_vars in queries)
     assert all("LIMIT 101" not in query for query, _ in queries)
+
+
+def test_id_coverage_summary_includes_mapped_ids_and_policy_skips():
+    class AQL:
+        def execute(self, query, bind_vars, **kwargs):
+            assert "d.kind == 'id_coverage'" in query
+            assert bind_vars == {"run_id": "run.yaml"}
+            return [{
+                "adapter": "input:NCBI", "node_type": "Gene", "role": "node",
+                "prefix": "NCBIGene", "ids": 10, "matched": 3, "allowed": 0,
+                "skipped": 7, "no_resolver": 0, "accepted": 3,
+                "present": 2, "checked": 10,
+            }]
+
+    summary = _get_id_coverage_summary(type("DB", (), {"aql": AQL()})(), "run.yaml", True)
+    assert summary["ids"] == 10
+    assert summary["present"] == 2
+    assert summary["skipped"] == 7
+    assert summary["missing_after_acceptance"] == 1
+    assert summary["adapters"][0]["prefixes"][0]["missing_after_acceptance"] == 1
 
 
 def test_failed_cleanup_attempt_overrides_completed_adapter_status():

@@ -371,6 +371,7 @@ class PounceParser:
                 ))
 
         # --- GeneMeta via GeneMap (mapped sheet) ---
+        gene_map = {}
         if "GeneMap" in parser.sheet_dfs:
             issues.extend(self._check_unknown_keys(parser, "GeneMap", "GeneMeta"))
             gene_map = parser.get_parameter_map("GeneMap")
@@ -380,6 +381,7 @@ class PounceParser:
             for _, row in parser.sheet_dfs["GeneMeta"].iterrows():
                 data.genes.append(
                     self._parse_mapped_row(row, gene_map, ParsedGene))
+        issues.extend(self._check_gene_id_requirements(parser, data, gene_map))
 
         # --- ProteinMeta via ProteinMap (mapped sheet) ---
         if "ProteinMap" in parser.sheet_dfs:
@@ -603,6 +605,70 @@ class PounceParser:
         return data, issues
 
     @staticmethod
+    def _check_gene_id_requirements(
+        parser: ExcelsheetParser, data: ParsedPounceData, gene_map: dict,
+    ) -> List[ValidationError]:
+        """Require gene IDs per experiment when its gene-level sheets need them."""
+        platform = (data.experiments[0].platform_type or "").strip().lower()
+        is_single_cell = platform == "sc_rnaseq"
+        has_gene_rows = any(
+            sheet in parser.sheet_dfs and not parser.sheet_dfs[sheet].empty
+            for sheet in ("GeneMeta", "RawData")
+        )
+        gene_id_col = gene_map.get("gene_id")
+        has_gene_id_map = gene_id_col not in (None, "", "NA", "N/A")
+        issues = []
+
+        if not has_gene_id_map and (has_gene_rows or ("GeneMap" in parser.sheet_dfs and not is_single_cell)):
+            message = (
+                "sc_rnaseq may omit gene_id only when GeneMeta and RawData have no data rows; "
+                "map gene_id to an ID column or leave those sheets empty for a future Seurat file"
+                if is_single_cell else "Map sheet GeneMap is missing configuration for: gene_id"
+            )
+            issues.append(ValidationError(
+                severity="error", entity="parse", field="gene_id", message=message,
+                sheet="GeneMap", column="gene_id", source_file=parser.file_path,
+            ))
+
+        if has_gene_id_map and "GeneMeta" in parser.sheet_dfs:
+            for row_index, gene in enumerate(data.genes):
+                if not gene.gene_id:
+                    issues.append(ValidationError(
+                        severity="error", entity="genes", field="gene_id",
+                        message="Sheet GeneMeta is missing required field: gene_id",
+                        sheet="GeneMeta", column="gene_id", row=row_index,
+                        source_file=parser.file_path,
+                    ))
+        return issues
+
+    @staticmethod
+    def _sc_gene_stats_issue(
+        exp_data: ParsedPounceData, stats_parser: ExcelsheetParser,
+    ) -> Optional[ValidationError]:
+        """Reject gene-level stats when a single-cell experiment has no gene ID mapping."""
+        if not exp_data.experiments:
+            return None
+        platform = (exp_data.experiments[0].platform_type or "").strip().lower()
+        if platform != "sc_rnaseq":
+            return None
+        if exp_data.param_maps.get("GeneMap", {}).get("gene_id") not in (None, "", "NA", "N/A"):
+            return None
+        if not any(
+            sheet in stats_parser.sheet_dfs and not stats_parser.sheet_dfs[sheet].empty
+            for sheet in ("StatsReadyData", "EffectSize")
+        ):
+            return None
+        return ValidationError(
+            severity="error", entity="parse", field="gene_id",
+            message=(
+                "sc_rnaseq without gene_id cannot include populated gene-level "
+                "StatsReadyData or EffectSize sheets; map gene_id in the paired "
+                "experiment or leave those sheets empty for a future Seurat file"
+            ),
+            sheet="EffectSize_Map", column="gene_id", source_file=stats_parser.file_path,
+        )
+
+    @staticmethod
     def _expected_analyte(sheet_names: Set[str], platform_type: Optional[str]) -> Optional[str]:
         for map_sheet, family in (
             ("GeneMap", "gene"), ("ProteinMap", "protein"), ("MetabMap", "metabolite")
@@ -682,6 +748,9 @@ class PounceParser:
                         exp_data.experiments[0].platform_type if exp_data.experiments else None,
                     ),
                 )
+                sc_stats_issue = self._sc_gene_stats_issue(exp_data, stats_parser)
+                if sc_stats_issue:
+                    stats_issues.append(sc_stats_issue)
                 combined.stats_results.extend(stats_data.stats_results)
                 combined.param_maps.update(stats_data.param_maps)
                 combined.workbook_versions[stats_files[i]] = stats_workbook.version

@@ -449,6 +449,19 @@ class TestParseProject:
             ProjectType.DRUG_OR_OTHER_EXPOSURE_CHARACTERIZATION
         )
 
+    def test_project_type_validator_accepts_v3_labels_and_drug_mechanism(self):
+        parser = _make_project_parser({"project_type": [
+            "Assay Development", "Pilot Study", "Drug Mechanism",
+        ]})
+        data, _ = PounceParser().parse_project(parser)
+        validator = next(
+            v for v in load_validators("src/use_cases/pounce/pounce_validators.yaml")
+            if v.sheet == "ProjectMeta" and v.column == "project_type"
+        )
+        assert validator.validate(data) == []
+        assert ProjectType.parse("Assay Development") is ProjectType.ASSAY_DEVELOPMENT
+        assert ProjectType.parse("Pilot Study") is ProjectType.PILOT_STUDY
+
     def test_rd_tag_yes_is_true(self):
         parser = _make_project_parser({"RD_tag": "yes"})
         data, _ = PounceParser().parse_project(parser)
@@ -641,6 +654,44 @@ BASIC_RUN_MAP = {
 
 
 class TestParseExperiment:
+
+    @staticmethod
+    def _gene_parser(platform_type, gene_map, gene_rows=None, raw_rows=None):
+        sheets = {
+            "ExperimentMeta": pd.DataFrame(),
+            "RunBioSampleMap": pd.DataFrame(),
+            "RunBioSampleMeta": pd.DataFrame(),
+            "GeneMap": pd.DataFrame(),
+            "GeneMeta": pd.DataFrame(gene_rows or []),
+            "RawData": pd.DataFrame(raw_rows or []),
+        }
+        parser = make_mock_parser(
+            meta_data={"ExperimentMeta": {"platform_type": platform_type}},
+            sheet_dfs=sheets,
+            param_maps={"GeneMap": gene_map, "RunBioSampleMap": {}},
+        )
+        parser.pounce_version = 3
+        return parser
+
+    def test_sc_rnaseq_can_omit_gene_id_with_empty_gene_sheets(self):
+        parser = self._gene_parser("sc_rnaseq", {})
+        _, issues = PounceParser().parse_experiment(parser)
+        assert not any(issue.field == "gene_id" and issue.severity == "error" for issue in issues)
+
+    def test_sc_rnaseq_without_gene_id_rejects_populated_raw_data(self):
+        parser = self._gene_parser("sc_rnaseq", {}, raw_rows=[{"Symbol": "TP53", "S1": 2}])
+        _, issues = PounceParser().parse_experiment(parser)
+        assert any(issue.sheet == "GeneMap" and "sc_rnaseq may omit" in issue.message for issue in issues)
+
+    def test_bulk_rnaseq_still_requires_gene_id_mapping(self):
+        parser = self._gene_parser("bulk_rnaseq", {})
+        _, issues = PounceParser().parse_experiment(parser)
+        assert any(issue.sheet == "GeneMap" and issue.field == "gene_id" for issue in issues)
+
+    def test_mapped_gene_id_requires_values_in_gene_meta(self):
+        parser = self._gene_parser("sc_rnaseq", {"gene_id": "GeneID"}, gene_rows=[{"GeneID": ""}])
+        _, issues = PounceParser().parse_experiment(parser)
+        assert any(issue.sheet == "GeneMeta" and issue.field == "gene_id" for issue in issues)
 
     def test_parses_experiment_name(self):
         parser = _make_experiment_parser({"experiment_name": "RNA-seq run 1"})
@@ -887,6 +938,70 @@ class TestCheckMappedColumns:
 
 
 class TestParseAll:
+
+    @staticmethod
+    def _book(parser, role):
+        from src.input_adapters.pounce_sheets.workbook_format import PounceWorkbook
+        return PounceWorkbook(
+            parser=parser, role=role, version=3,
+            original_sheets={sheet: sheet for sheet in parser.sheet_dfs},
+        )
+
+    def test_mixed_sc_and_bulk_require_gene_id_only_for_bulk(self, monkeypatch):
+        from src.input_adapters.pounce_sheets.parsed_pounce_data import ParsedPounceData
+        from src.input_adapters.pounce_sheets.parsed_classes import ParsedProject
+
+        monkeypatch.setattr(
+            PounceParser, "parse_project",
+            lambda self, parser: (ParsedPounceData(project=ParsedProject(project_name="P1")), []),
+        )
+        sc = TestParseExperiment._gene_parser("sc_rnaseq", {})
+        bulk = TestParseExperiment._gene_parser("bulk_rnaseq", {})
+        sc.file_path = "sc.xlsx"
+        bulk.file_path = "bulk.xlsx"
+        project = make_mock_parser(sheet_dfs={})
+        books = {
+            "project.xlsx": self._book(project, "project"),
+            "sc.xlsx": self._book(sc, "experiment"),
+            "bulk.xlsx": self._book(bulk, "experiment"),
+        }
+        _, issues = PounceParser().parse_all(
+            "project.xlsx", ["sc.xlsx", "bulk.xlsx"],
+            workbook_loader=lambda path, role: books[path],
+        )
+        gene_issues = [issue for issue in issues if issue.sheet == "GeneMap" and issue.field == "gene_id"]
+        assert [issue.source_file for issue in gene_issues] == ["bulk.xlsx"]
+
+    def test_sc_without_gene_id_rejects_populated_stats_matrix(self, monkeypatch):
+        from src.input_adapters.pounce_sheets.parsed_pounce_data import ParsedPounceData
+        from src.input_adapters.pounce_sheets.parsed_classes import ParsedProject
+
+        monkeypatch.setattr(
+            PounceParser, "parse_project",
+            lambda self, parser: (ParsedPounceData(project=ParsedProject(project_name="P1")), []),
+        )
+        sc = TestParseExperiment._gene_parser("sc_rnaseq", {})
+        sc.file_path = "sc.xlsx"
+        stats = make_mock_parser(sheet_dfs={
+            "StatsResultsMeta": pd.DataFrame(),
+            "EffectSize": pd.DataFrame([{"Symbol": "TP53", "P": 0.01}]),
+        })
+        stats.file_path = "stats.xlsx"
+        books = {
+            "project.xlsx": self._book(make_mock_parser(sheet_dfs={}), "project"),
+            "sc.xlsx": self._book(sc, "experiment"),
+            "stats.xlsx": self._book(stats, "stats"),
+        }
+        _, issues = PounceParser().parse_all(
+            "project.xlsx", ["sc.xlsx"], ["stats.xlsx"],
+            workbook_loader=lambda path, role: books[path],
+        )
+        assert any(
+            issue.source_file == "stats.xlsx"
+            and issue.sheet == "EffectSize_Map"
+            and "without gene_id" in issue.message
+            for issue in issues
+        )
 
     def test_partial_stats_list_requires_explicit_missing_slot(self):
         with pytest.raises(ValueError, match="use None"):
