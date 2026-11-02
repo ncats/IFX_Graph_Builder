@@ -66,6 +66,9 @@ class OutputAdapter(ABC):
     def record_unmatched_ids(self, run_id: str, adapter_name: str, phase: str, issues: list[dict]) -> None:
         pass
 
+    def record_id_coverage(self, run_id: str, adapter_name: str, phase: str, records: list[dict]) -> None:
+        pass
+
     def finish_build_diagnostics(self, run_id: str) -> None:
         pass
 

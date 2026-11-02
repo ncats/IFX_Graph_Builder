@@ -178,7 +178,8 @@ class ParallelListsValidator(Validator):
     """
 
     def __init__(self, entity: str, fields: List[str], columns: List[str],
-                 sheet: Optional[str] = None):
+                 sheet: Optional[str] = None,
+                 optional_if_empty: Optional[List[str]] = None):
         col_str = ", ".join(columns)
         super().__init__(
             entity=entity,
@@ -189,6 +190,7 @@ class ParallelListsValidator(Validator):
         )
         self.fields = fields
         self.columns = columns
+        self.optional_if_empty = set(optional_if_empty or [])
 
     def validate(self, data: Any) -> List[ValidationError]:
         entity_obj = getattr(data, self.entity, None)
@@ -215,7 +217,11 @@ class ParallelListsValidator(Validator):
             else:
                 lengths[f] = 1
 
-        if len(set(lengths.values())) <= 1:
+        compared_lengths = {
+            f: length for f, length in lengths.items()
+            if length or f not in self.optional_if_empty
+        }
+        if len(set(compared_lengths.values())) <= 1:
             return None
 
         detail = ", ".join(

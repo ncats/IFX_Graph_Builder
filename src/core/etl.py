@@ -108,6 +108,13 @@ class ETL:
                                 )
 
                         input_adapter.set_unmatched_reporter(report_unmatched)
+                        def report_id_coverage(records, adapter_name=checkpoint_name, adapter_phase=phase):
+                            for output_adapter in self.output_adapters:
+                                output_adapter.record_id_coverage(
+                                    effective_run_id, adapter_name, adapter_phase, records
+                                )
+
+                        input_adapter.set_id_coverage_reporter(report_id_coverage)
                         count = 0
                         try:
                             for resolved_list in input_adapter.get_resolved_and_provenanced_list(

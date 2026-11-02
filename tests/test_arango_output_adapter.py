@@ -1023,6 +1023,78 @@ def test_unmatched_diagnostics_keep_raw_id_and_role(monkeypatch):
     assert "OLD.occurrences + issue.occurrences" in calls[0][0]
 
 
+def test_id_coverage_records_canonical_targets_and_checks_their_presence():
+    calls = []
+    adapter = ArangoOutputAdapter.__new__(ArangoOutputAdapter)
+    adapter._build_diagnostics_collection = lambda: None
+
+    issues = [
+        {"_key": "mapped", "targets": [{"node_type": "Gene", "id": "IFXGene:1",
+                                         "handle": "Gene/IFXGene:1"}]},
+        {"_key": "skipped", "targets": []},
+    ]
+
+    class Aql:
+        def execute(self, query, bind_vars=None, **kwargs):
+            calls.append((query, bind_vars))
+            if "RETURN KEEP(d" in query:
+                return issues
+            if "DOCUMENT(handle)" in query:
+                return [{"handle": handle, "present": True} for handle in bind_vars["handles"]]
+            return []
+
+    adapter.get_db = lambda: SimpleNamespace(aql=Aql(), has_collection=lambda name: name == "Gene")
+    adapter.record_id_coverage("run.yaml", "input:NCBI", "input", [
+        {"node_type": "Gene", "endpoint_role": "node", "source_id": "NCBIGene:1",
+         "occurrences": 2, "resolver_outcome": "matched", "targets": [("Gene", "IFXGene:1")]},
+    ])
+    stored = calls[0][1]["issues"][0]
+    assert stored["id_prefix"] == "NCBIGene"
+    assert stored["targets"] == [{"node_type": "Gene", "id": "IFXGene:1",
+                                  "handle": "Gene/IFXGene:1"}]
+
+    adapter._reconcile_id_coverage_presence("run.yaml")
+    assert calls[-1][1]["updates"] == [
+        {"_key": "mapped", "final_node_present": True},
+        {"_key": "skipped", "final_node_present": False},
+    ]
+
+
+def test_legacy_resume_does_not_claim_complete_id_coverage():
+    documents = {"build_diagnostics__run.yaml": {
+        "_key": "build_diagnostics__run.yaml", "status": "partial",
+    }}
+
+    class Store:
+        def get(self, key):
+            return documents.get(key)
+
+        def insert(self, doc, overwrite=False):
+            documents[doc["_key"]] = doc
+
+        def delete(self, key):
+            documents.pop(key, None)
+
+    adapter = ArangoOutputAdapter.__new__(ArangoOutputAdapter)
+    adapter._build_diagnostics_collection = lambda: None
+    adapter.get_metadata_store = lambda truncate=False: Store()
+    adapter.get_db = lambda: SimpleNamespace(
+        has_collection=lambda name: False,
+        aql=SimpleNamespace(execute=lambda *args, **kwargs: []),
+    )
+
+    adapter.set_build_run_id("run.yaml")
+    assert "coverage_schema_version" not in documents["build_diagnostics__run.yaml"]
+
+    documents.pop("build_diagnostics__run.yaml")
+    documents["etl_checkpoint__run.yaml"] = {"_key": "etl_checkpoint__run.yaml"}
+    adapter.set_build_run_id("run.yaml")
+    assert "coverage_schema_version" not in documents["build_diagnostics__run.yaml"]
+
+    adapter.reset_run_state("run.yaml")
+    assert documents["build_diagnostics__run.yaml"]["coverage_schema_version"] == 1
+
+
 def test_unmatched_final_node_presence_checks_graph_after_cleanup():
     updates = []
     issues = [

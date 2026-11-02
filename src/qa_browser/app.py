@@ -9238,10 +9238,15 @@ def _get_build_diagnostics(db, run_id: str | None, kind: str = "", adapter: str 
                 AND (@adapter == '' OR d.adapter == @adapter)
                 AND (@node_type == '' OR d.node_type == @node_type)
                 AND (@endpoint_role == '' OR d.endpoint_role == @endpoint_role)
-                AND (@id_prefix == '' OR (d.kind == 'unmatched_id' AND prefix == @id_prefix))
+                AND (@id_prefix == '' OR
+                     (d.kind == 'unmatched_id' AND prefix == @id_prefix) OR
+                     (d.kind == 'id_coverage' AND d.id_prefix == @id_prefix))
                 AND (@edge_collection == '' OR d.edge_collection == @edge_collection)
                 AND (@final_node_presence == '' OR
-                     (@final_node_presence == 'absent' AND d.kind == 'unmatched_id' AND d.final_node_present == false))
+                     (@final_node_presence == 'absent' AND d.kind == 'unmatched_id' AND d.final_node_present == false) OR
+                     (@final_node_presence == 'missing_accepted' AND d.kind == 'id_coverage' AND
+                      LENGTH(d.targets) > 0 AND d.final_node_present == false) OR
+                     (@final_node_presence == 'skipped' AND d.kind == 'id_coverage' AND d.resolver_outcome == 'skipped'))
                 AND (@after == '' OR d._key > @after)
             SORT d._key
             LIMIT 101
@@ -9254,7 +9259,9 @@ def _get_build_diagnostics(db, run_id: str | None, kind: str = "", adapter: str 
         next_query = urlencode({**bind_vars, "after": rows[-1]["_key"], "view": "records"})
     return {
         "available": True, "run_id": run_id, "status": status_doc.get("status", "partial"),
-        "updated_at": status_doc.get("updated_at"), "summary": summary, "rows": rows,
+        "updated_at": status_doc.get("updated_at"),
+        "coverage_schema_version": status_doc.get("coverage_schema_version"),
+        "summary": summary, "rows": rows,
         "next_query": next_query,
     }
 
@@ -9321,6 +9328,57 @@ def _get_unmatched_id_summary(db, run_id: str) -> dict:
         "present_ids": sum(group["present_ids"] for group in groups),
         "absent_ids": sum(group["absent_ids"] for group in groups),
         "affected_adapters": sum(group["absent_ids"] > 0 for group in groups),
+    }
+
+
+def _get_id_coverage_summary(db, run_id: str, build_complete: bool = False) -> dict:
+    rows = list(db.aql.execute("""
+        FOR d IN build_diagnostics
+            FILTER d.run_id == @run_id AND d.kind == 'id_coverage' AND d.schema_version == 1
+            COLLECT adapter = d.adapter, node_type = d.node_type,
+                    role = d.endpoint_role, prefix = d.id_prefix
+                AGGREGATE ids = COUNT(),
+                          matched = SUM(d.resolver_outcome == 'matched' ? 1 : 0),
+                          allowed = SUM(d.resolver_outcome == 'allowed' ? 1 : 0),
+                          skipped = SUM(d.resolver_outcome == 'skipped' ? 1 : 0),
+                          no_resolver = SUM(d.resolver_outcome == 'no_resolver' ? 1 : 0),
+                          accepted = SUM(LENGTH(d.targets) > 0 ? 1 : 0),
+                          present = SUM(d.final_node_present == true ? 1 : 0),
+                          checked = SUM(HAS(d, 'final_node_present') ? 1 : 0)
+            RETURN {adapter, node_type, role, prefix, ids, matched, allowed,
+                    skipped, no_resolver, accepted, present, checked}
+    """, bind_vars={"run_id": run_id}, max_runtime=600))
+    adapters = {}
+    for row in rows:
+        row["missing_after_acceptance"] = max(0, row["accepted"] - row["present"])
+        group = adapters.setdefault(row["adapter"], {
+            "adapter": row["adapter"], "ids": 0, "accepted": 0, "present": 0,
+            "skipped": 0, "checked": 0, "missing_after_acceptance": 0, "prefixes": [],
+        })
+        for key in ("ids", "accepted", "present", "skipped", "checked",
+                    "missing_after_acceptance"):
+            group[key] += row[key]
+        group["prefixes"].append(row)
+    presence_ready = build_complete and sum(group["checked"] for group in adapters.values()) == sum(
+        group["ids"] for group in adapters.values()
+    )
+    for group in adapters.values():
+        group["prefixes"].sort(key=lambda row: (
+            -row["missing_after_acceptance"] if presence_ready else -row["ids"],
+            -row["skipped"], row["node_type"], row["prefix"]
+        ))
+    groups = sorted(adapters.values(), key=lambda group: (
+        -group["missing_after_acceptance"] if presence_ready else -group["ids"],
+        -group["skipped"], group["adapter"]
+    ))
+    return {
+        "available": True, "adapters": groups,
+        "ids": sum(group["ids"] for group in groups),
+        "accepted": sum(group["accepted"] for group in groups),
+        "present": sum(group["present"] for group in groups),
+        "skipped": sum(group["skipped"] for group in groups),
+        "checked": sum(group["checked"] for group in groups),
+        "missing_after_acceptance": sum(group["missing_after_acceptance"] for group in groups),
     }
 
 
@@ -10713,9 +10771,10 @@ async def build_diagnostics_page(request: Request, db_name: str, run_id: str = "
         "records" if any((kind, adapter, node_type, endpoint_role, after, id_prefix, edge_collection, final_node_presence))
         else "unmatched"
     )
-    unmatched_summary = (
-        _get_unmatched_id_summary(db, selected_run_id)
-        if diagnostics["available"] and selected_view == "unmatched" else None
+    coverage_summary = (
+        _get_id_coverage_summary(db, selected_run_id, diagnostics["status"] == "complete")
+        if diagnostics["available"] and selected_view == "unmatched"
+        and diagnostics.get("coverage_schema_version") == 1 else {"available": False}
     )
     dangling_summary = (
         _get_dangling_edge_summary(db, selected_run_id)
@@ -10732,7 +10791,7 @@ async def build_diagnostics_page(request: Request, db_name: str, run_id: str = "
         "request": request, "db_name": db_name, "diagnostics": diagnostics,
         "build_status": build_status, "kind": kind, "adapter": adapter,
         "node_type": node_type, "endpoint_role": endpoint_role,
-        "selected_view": selected_view, "unmatched_summary": unmatched_summary,
+        "selected_view": selected_view, "coverage_summary": coverage_summary,
         "dangling_summary": dangling_summary, "tab_queries": tab_queries,
         "record_query": record_query, "id_prefix": id_prefix,
         "edge_collection": edge_collection, "final_node_presence": final_node_presence,

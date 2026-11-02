@@ -32,6 +32,8 @@ class ProjectType(LabeledIntEnum):
     DRUG_MECHANISM                   = (5, "Drug Mechanism")
     KO_KD_SCREENING                  = (6, "KO/KD screening")
     DRUG_OR_OTHER_EXPOSURE_CHARACTERIZATION = (7, "Drug or other Exposure Characterization")
+    ASSAY_DEVELOPMENT                = (8, "Assay Development")
+    PILOT_STUDY                      = (9, "Pilot Study")
 
 @dataclass
 class Person(Node):

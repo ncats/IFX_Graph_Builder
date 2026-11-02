@@ -15,44 +15,55 @@
        {% if diagnostics.updated_at %} · Updated {{ diagnostics.updated_at }}{% endif %}</p>
     {% if diagnostics.status != 'complete' %}<p class="subtle">This run is incomplete; counts below are recorded so far.</p>{% endif %}
     <nav class="report-tabs" aria-label="ID and edge report views">
-        <a href="{{ root_path }}/db/{{ db_name }}/build-diagnostics?{{ tab_queries.unmatched }}" class="report-tab{% if selected_view == 'unmatched' %} active{% endif %}"{% if selected_view == 'unmatched' %} aria-current="page"{% endif %}>Unmatched IDs</a>
+        <a href="{{ root_path }}/db/{{ db_name }}/build-diagnostics?{{ tab_queries.unmatched }}" class="report-tab{% if selected_view == 'unmatched' %} active{% endif %}"{% if selected_view == 'unmatched' %} aria-current="page"{% endif %}>ID coverage</a>
         <a href="{{ root_path }}/db/{{ db_name }}/build-diagnostics?{{ tab_queries.dangling }}" class="report-tab{% if selected_view == 'dangling' %} active{% endif %}"{% if selected_view == 'dangling' %} aria-current="page"{% endif %}>Dangling edges</a>
         <a href="{{ root_path }}/db/{{ db_name }}/build-diagnostics?{{ tab_queries.records }}" class="report-tab{% if selected_view == 'records' %} active{% endif %}"{% if selected_view == 'records' %} aria-current="page"{% endif %}>All records</a>
     </nav>
 
     {% if selected_view == 'unmatched' %}
-        {% set presence_ready = diagnostics.status == 'complete' and unmatched_summary.checked_ids == unmatched_summary.ids %}
-        <p class="subtle">These are resolver-unmatched raw ID/type pairs recorded during this run. “Landed” means the raw ID exists as a final node after a completed build. This is not a percentage of all IDs emitted by an adapter, and it does not show whether an edge survived.</p>
-        {% if unmatched_summary.adapters %}
-        <div class="build-summary-row" aria-label="Diagnostic ID summary">
-            <div class="build-stat"><div class="value">{{ "{:,}".format(unmatched_summary.affected_adapters) if presence_ready else 'Pending' }}</div><div class="label">Adapters with absent IDs</div></div>
-            <div class="build-stat"><div class="value">{{ "{:,}".format(unmatched_summary.absent_ids) if presence_ready else 'Pending' }}</div><div class="label">Absent diagnostic IDs</div></div>
-            <div class="build-stat"><div class="value">{% if presence_ready and unmatched_summary.checked_ids %}{{ "%.1f"|format(100 * unmatched_summary.present_ids / unmatched_summary.checked_ids) }}%{% else %}Pending{% endif %}</div><div class="label">Diagnostic IDs landed{% if presence_ready %} · {{ "{:,}".format(unmatched_summary.present_ids) }} / {{ "{:,}".format(unmatched_summary.checked_ids) }} checked{% endif %}</div></div>
+        {% if coverage_summary.available %}
+        {% if coverage_summary.ids %}
+        {% set presence_ready = diagnostics.status == 'complete' and coverage_summary.checked == coverage_summary.ids %}
+        <p class="subtle">Distinct source ID/type/role pairs emitted by each adapter, including node IDs and edge endpoints. “Final target present” means at least one resolved node exists in the finished graph. It does not prove this adapter's payload or an edge survived.</p>
+        <div class="build-summary-row" aria-label="ID coverage summary">
+            <div class="build-stat"><div class="value">{{ "{:,}".format(coverage_summary.ids) }}</div><div class="label">Source ID/type/role pairs</div></div>
+            <div class="build-stat"><div class="value">{% if presence_ready %}{{ "{:,}".format(coverage_summary.present) }}{% else %}Pending{% endif %}</div><div class="label">Final targets present</div></div>
+            <div class="build-stat"><div class="value">{% if presence_ready %}{{ "%.1f"|format(100 * coverage_summary.present / coverage_summary.ids) }}%{% else %}Pending{% endif %}</div><div class="label">Present / emitted IDs</div></div>
+            <div class="build-stat"><div class="value">{{ "{:,}".format(coverage_summary.skipped) }}</div><div class="label">Skipped by resolver policy</div></div>
+            <div class="build-stat"><div class="value">{% if presence_ready %}{{ "{:,}".format(coverage_summary.missing_after_acceptance) }}{% else %}Pending{% endif %}</div><div class="label">Missing after acceptance</div></div>
         </div>
-        {% if not presence_ready %}<p class="subtle">Final node presence is pending until the build and all diagnostic ID checks finish.</p>{% endif %}
-        {% for group in unmatched_summary.adapters %}
+        {% if not presence_ready %}<p class="subtle">Final target checks are pending until the build completes. Emitted and skipped counts are recorded so far.</p>{% endif %}
+        {% for group in coverage_summary.adapters %}
         <section class="card diagnostic-adapter-card" aria-labelledby="adapter-{{ loop.index }}">
             <div class="diagnostic-card-heading">
                 <h2 id="adapter-{{ loop.index }}">{{ group.adapter }}</h2>
                 <div class="diagnostic-card-metrics">
-                    <strong>{% if presence_ready %}<a href="{{ root_path }}/db/{{ db_name }}/build-diagnostics?{{ record_query(kind='unmatched_id', adapter=group.adapter, final_node_presence='absent') }}">{{ "{:,}".format(group.absent_ids) }} absent</a>{% else %}Presence pending{% endif %}</strong>
-                    <span>{% if presence_ready and group.checked_ids %}{{ "%.1f"|format(100 * group.present_ids / group.checked_ids) }}% landed · {{ "{:,}".format(group.present_ids) }} / {{ "{:,}".format(group.checked_ids) }} checked{% else %}{{ "{:,}".format(group.ids) }} diagnostic IDs{% endif %}</span>
+                    <strong>{% if presence_ready %}{{ "{:,}".format(group.present) }} / {{ "{:,}".format(group.ids) }} final targets present · {{ "%.1f"|format(100 * group.present / group.ids) }}%{% else %}{{ "{:,}".format(group.ids) }} IDs emitted · presence pending{% endif %}</strong>
+                    <span>{{ "{:,}".format(group.skipped) }} skipped by policy{% if presence_ready %} · {{ "{:,}".format(group.missing_after_acceptance) }} missing after acceptance{% endif %}</span>
                 </div>
             </div>
             <div class="diagnostic-table-scroll"><table>
-                <thead><tr><th scope="col">Node type</th><th scope="col">ID prefix</th><th scope="col">Absent IDs</th><th scope="col">Landed / checked</th><th scope="col">Landed %</th><th scope="col">Resolver outcomes</th></tr></thead>
+                <thead><tr><th scope="col">Node type</th><th scope="col">Role</th><th scope="col">ID prefix</th><th scope="col">Emitted IDs</th><th scope="col">Final target present</th><th scope="col">Present %</th><th scope="col">Skipped by policy</th><th scope="col">Missing after acceptance</th></tr></thead>
                 <tbody>{% for row in group.prefixes %}<tr>
                     <td>{{ row.node_type }}</td>
-                    <td><a href="{{ root_path }}/db/{{ db_name }}/build-diagnostics?{{ record_query(kind='unmatched_id', adapter=group.adapter, node_type=row.node_type, id_prefix=row.prefix) }}">{{ row.prefix }}</a></td>
-                    <td>{% if presence_ready %}<a href="{{ root_path }}/db/{{ db_name }}/build-diagnostics?{{ record_query(kind='unmatched_id', adapter=group.adapter, node_type=row.node_type, id_prefix=row.prefix, final_node_presence='absent') }}">{{ "{:,}".format(row.absent_ids) }}</a>{% else %}<span class="subtle">Pending</span>{% endif %}</td>
-                    <td>{% if presence_ready %}{{ "{:,}".format(row.present_ids) }} / {{ "{:,}".format(row.checked_ids) }}{% else %}<span class="subtle">Pending</span>{% endif %}</td>
-                    <td>{% if presence_ready and row.checked_ids %}{{ "%.1f"|format(100 * row.present_ids / row.checked_ids) }}%{% else %}<span class="subtle">Pending</span>{% endif %}</td>
-                    <td>{{ "{:,}".format(row.allowed_ids) }} allowed · {{ "{:,}".format(row.skipped_ids) }} skipped{% if row.error_ids %} · {{ "{:,}".format(row.error_ids) }} errors{% endif %}</td>
+                    <td>{{ row.role }}</td>
+                    <td><a href="{{ root_path }}/db/{{ db_name }}/build-diagnostics?{{ record_query(kind='id_coverage', adapter=group.adapter, node_type=row.node_type, endpoint_role=row.role, id_prefix=row.prefix) }}">{{ row.prefix }}</a></td>
+                    <td>{{ "{:,}".format(row.ids) }}</td>
+                    <td>{% if presence_ready %}{{ "{:,}".format(row.present) }}{% else %}<span class="subtle">Pending</span>{% endif %}</td>
+                    <td>{% if presence_ready %}{{ "%.1f"|format(100 * row.present / row.ids) }}%{% else %}<span class="subtle">Pending</span>{% endif %}</td>
+                    <td><a href="{{ root_path }}/db/{{ db_name }}/build-diagnostics?{{ record_query(kind='id_coverage', adapter=group.adapter, node_type=row.node_type, endpoint_role=row.role, id_prefix=row.prefix, final_node_presence='skipped') }}">{{ "{:,}".format(row.skipped) }}</a></td>
+                    <td>{% if presence_ready %}<a href="{{ root_path }}/db/{{ db_name }}/build-diagnostics?{{ record_query(kind='id_coverage', adapter=group.adapter, node_type=row.node_type, endpoint_role=row.role, id_prefix=row.prefix, final_node_presence='missing_accepted') }}">{{ "{:,}".format(row.missing_after_acceptance) }}</a>{% else %}<span class="subtle">Pending</span>{% endif %}</td>
                 </tr>{% endfor %}</tbody>
             </table></div>
         </section>
         {% endfor %}
-        {% else %}<p>No unmatched IDs recorded for this run.</p>{% endif %}
+        {% else %}<p>No source IDs were recorded for this run.</p>{% endif %}
+        {% else %}
+        <div class="card"><h2>ID coverage unavailable for this run</h2>
+            <p>This build recorded only resolver-unmatched IDs. It did not record all IDs emitted by adapters or their resolved target nodes, so a landing percentage cannot be calculated. Run a new build with ID coverage diagnostics to populate this view.</p>
+            <p><a href="{{ root_path }}/db/{{ db_name }}/build-diagnostics?{{ record_query(kind='unmatched_id') }}">Inspect legacy unmatched-ID records</a></p>
+        </div>
+        {% endif %}
 
     {% elif selected_view == 'dangling' %}
         <p class="subtle">Run-wide counts of edges whose endpoint node was missing. Endpoint types are graph collections; ID prefixes come from the stored endpoint handles.</p>
@@ -86,14 +97,15 @@
             <input type="hidden" name="run_id" value="{{ diagnostics.run_id }}">
             <input type="hidden" name="view" value="records">
             <label>Kind <select name="kind"><option value="">All</option>
-                <option value="unmatched_id" {% if kind == 'unmatched_id' %}selected{% endif %}>Unmatched IDs</option>
+                <option value="id_coverage" {% if kind == 'id_coverage' %}selected{% endif %}>ID coverage</option>
+                <option value="unmatched_id" {% if kind == 'unmatched_id' %}selected{% endif %}>Legacy unmatched IDs</option>
                 <option value="dangling_edge" {% if kind == 'dangling_edge' %}selected{% endif %}>Deleted dangling edges</option>
             </select></label>
             <label>Adapter <input name="adapter" value="{{ adapter }}" placeholder="input:AdapterName"></label>
             <label>Node type <input name="node_type" value="{{ node_type }}" placeholder="Protein"></label>
             <label>ID prefix <input name="id_prefix" value="{{ id_prefix }}" placeholder="UniProtKB"></label>
             <label>Edge collection <input name="edge_collection" value="{{ edge_collection }}" placeholder="ProteinGoTermEdge"></label>
-            <label>Final node <select name="final_node_presence"><option value="">All</option><option value="absent" {% if final_node_presence == 'absent' %}selected{% endif %}>Absent</option></select></label>
+            <label>Final target <select name="final_node_presence"><option value="">All</option><option value="missing_accepted" {% if final_node_presence == 'missing_accepted' %}selected{% endif %}>Missing after acceptance</option><option value="skipped" {% if final_node_presence == 'skipped' %}selected{% endif %}>Skipped by policy</option><option value="absent" {% if final_node_presence == 'absent' %}selected{% endif %}>Legacy raw ID absent</option></select></label>
             <label>Role <select name="endpoint_role"><option value="">All</option>
                 {% for role in ['node', 'start', 'end'] %}<option value="{{ role }}" {% if endpoint_role == role %}selected{% endif %}>{{ role }}</option>{% endfor %}
             </select></label>
@@ -103,12 +115,18 @@
         <table><thead><tr><th>Kind</th><th>Adapter / collection</th><th>Type / role</th><th>Raw ID / edge</th><th>Details</th></tr></thead><tbody>
         {% for row in diagnostics.rows %}<tr>
             <td>{{ row.kind.replace('_', ' ') }}</td>
-            {% if row.kind == 'unmatched_id' %}
+            {% if row.kind == 'id_coverage' %}
+            <td>{{ row.adapter }}</td><td>{{ row.node_type }} · {{ row.endpoint_role }}</td>
+            <td class="mono">{{ row.source_id }}</td>
+            <td>{{ row.resolver_outcome }} · Final target: {% if row.final_node_present is sameas true %}present{% elif row.final_node_present is sameas false %}absent{% else %}pending{% endif %}
+                {% if row.targets %}<br><span class="mono">{% for target in row.targets %}{{ target.node_type }}/{{ target.id }}{% if not loop.last %}, {% endif %}{% endfor %}</span>{% endif %}
+            </td>
+            {% elif row.kind == 'unmatched_id' %}
             <td>{{ row.adapter }}</td><td>{{ row.node_type }} · {{ row.endpoint_role }}</td>
             <td class="mono">{{ row.source_id }}</td>
             <td>{{ "{:,}".format(row.occurrences) }} occurrence{% if row.occurrences != 1 %}s{% endif %}
                 · Resolver: {{ row.resolver_outcome or 'unknown' }}
-                · Final node: {% if row.final_node_present is sameas true %}present{% elif row.final_node_present is sameas false %}absent{% else %}not checked{% endif %}
+                · Legacy raw node: {% if row.final_node_present is sameas true %}present{% elif row.final_node_present is sameas false %}absent{% else %}not checked{% endif %}
             </td>
             {% else %}
             <td>{{ row.edge_collection }}</td><td>Missing {% if row.missing_from %}start{% endif %}{% if row.missing_from and row.missing_to %} and {% endif %}{% if row.missing_to %}end{% endif %}</td>

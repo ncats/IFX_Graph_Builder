@@ -144,9 +144,19 @@ def load_validators(yaml_file_or_dict) -> List[Validator]:
                 ))
 
             for group in top_value.get("parallel_lists", []):
-                # group is a list of ncatsdpi keys, e.g. ["owner_name", "owner_email"]
+                # A group may mark a field optional when its entire list is absent.
+                if isinstance(group, dict):
+                    keys = group["fields"]
+                    optional_keys = set(group.get("optional_if_empty", []))
+                    if not optional_keys.issubset(keys):
+                        raise ValueError(
+                            f"optional_if_empty must name fields in parallel_lists: {group}"
+                        )
+                else:
+                    keys = group
+                    optional_keys = set()
                 resolved = []
-                for ncatsdpi_key in group:
+                for ncatsdpi_key in keys:
                     if (sheet, ncatsdpi_key) not in _SHEET_KEY_MAP:
                         known_sheets = sorted({s for s, _ in _SHEET_KEY_MAP})
                         raise KeyError(
@@ -169,6 +179,7 @@ def load_validators(yaml_file_or_dict) -> List[Validator]:
                     fields=[r[1] for r in resolved],
                     columns=[r[2] for r in resolved],
                     sheet=sheet,
+                    optional_if_empty=[field for _, field, key in resolved if key in optional_keys],
                 ))
 
             for group in top_value.get("indexed_group", []):

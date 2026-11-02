@@ -30,6 +30,19 @@ class TestIndexedGroupValidatorDirect:
         data = _make_data({"biosample_id": "SampleID"})
         assert _make_validator().validate(data) == []
 
+    def test_configured_exposure_category_is_optional_in_pounce_rules(self):
+        validator = next(
+            v for v in load_validators("src/use_cases/pounce/pounce_validators.yaml")
+            if isinstance(v, IndexedGroupValidator) and v.sheet == "BioSampleMap"
+        )
+        assert validator.validate(_make_data({
+            "exposure1_names": "DrugName", "exposure1_type": "DrugType",
+        })) == []
+        errors = validator.validate(_make_data({"exposure1_category": "DrugCat"}))
+        assert {error.column for error in errors} == {
+            "exposure1_names", "exposure1_type",
+        }
+
     def test_complete_exposure1_passes(self):
         data = _make_data({
             "exposure1_names": "DrugName",

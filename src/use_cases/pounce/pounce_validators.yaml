@@ -7,7 +7,6 @@ ProjectMeta:
     - owner_email
     - keywords
     - collaborator_name
-    - collaborator_email
     - privacy_type
     - lab_groups
     - project_type
@@ -22,7 +21,8 @@ ProjectMeta:
     RD_tag: [Yes, No]
   parallel_lists:
     - [owner_name, owner_email]
-    - [collaborator_name, collaborator_email]
+    - fields: [collaborator_name, collaborator_email]
+      optional_if_empty: [collaborator_email]
 
 BioSampleMap:
   required:
@@ -32,7 +32,7 @@ BioSampleMap:
     - biospecimen_type
     - organism_names
   indexed_group:
-    - ["exposure{}_names", "exposure{}_type", "exposure{}_category"]
+    - ["exposure{}_names", "exposure{}_type"]
 
 BioSampleMeta:
   required:
@@ -92,14 +92,6 @@ MetabMeta:
   allowed_values:
     identification_level: [1, 2, 3, 4, 5]
 
-GeneMap:
-  required:
-    - gene_id
-
-GeneMeta:
-  required:
-    - gene_id
-
 ProteinMap:
   required:
     - protein_id
@@ -130,6 +122,8 @@ StatsResultsMeta:
 # The paired StatsResults analyte key is checked per experiment by
 # PounceParser.parse_stats_results(). A global map check would incorrectly
 # require keys for experiments that have no StatsResults workbook.
+# Gene ID requirements also run per experiment in PounceParser.parse_experiment()
+# so sc_rnaseq and bulk experiments can coexist in one submission.
 
 # Cross-sheet ID reference checks are all handled as structural checks at parse time,
 # not here.  This gives each error a source_file and respects per-file pairing.

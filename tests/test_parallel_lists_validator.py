@@ -123,6 +123,25 @@ class TestParallelListsValidatorDirect:
 
 class TestLoadValidatorsParallelLists:
 
+    def test_collaborator_email_is_optional_but_supplied_lists_must_match(self):
+        validators = load_validators("src/use_cases/pounce/pounce_validators.yaml")
+        required_email = [
+            v for v in validators
+            if v.sheet == "ProjectMeta" and v.column == "collaborator_email"
+        ]
+        assert required_email == []
+        collaborator_list = next(
+            v for v in validators
+            if isinstance(v, ParallelListsValidator)
+            and v.columns == ["collaborator_name", "collaborator_email"]
+        )
+        assert collaborator_list.validate(_make_data(
+            collaborator_names=["Alice", "Bob"], collaborator_emails=[]
+        )) == []
+        assert len(collaborator_list.validate(_make_data(
+            collaborator_names=["Alice", "Bob"], collaborator_emails=["alice@example.org"]
+        ))) == 1
+
     def test_loads_parallel_lists_validator(self):
         config = {
             "ProjectMeta": {
