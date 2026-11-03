@@ -2,7 +2,7 @@ source_credentials: &source_credentials ./src/use_cases/secrets/ifxdev_arangodb.
 legacy_pharos_credentials: &legacy_pharos_credentials ./src/use_cases/secrets/pharos_credentials.yaml
 database_name: &database_name pharos
 targets_release: &targets_release {kind: derived_snapshot, snapshot_id: ifx_harmonizers:targets:2.5.2}
-diseases_release: &diseases_release {kind: derived_snapshot, snapshot_id: ifx_harmonizers:diseases:2.3.3}
+diseases_release: &diseases_release {kind: derived_snapshot, snapshot_id: ifx_harmonizers:diseases:2.3.5}
 pchembl_cutoff: &pchembl_cutoff 5
 
 registry:
