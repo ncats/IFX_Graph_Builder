@@ -48,7 +48,7 @@ resolvers:
     import: ./src/id_resolvers/disease_consumer_resolver.py
     class: DiseaseConsumerResolver
     kwargs:
-      data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:diseases:2.3.3}
+      data_source: {kind: derived_snapshot, snapshot_id: ifx_harmonizers:diseases:2.3.5}
       types: [Disease]
       no_match_behavior: Allow
       multi_match_behavior: Error
