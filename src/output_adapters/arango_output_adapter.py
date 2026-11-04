@@ -1117,7 +1117,7 @@ class ArangoOutputAdapter(OutputAdapter, ArangoAdapter):
         cursor = db.aql.execute(
             "FOR d IN build_diagnostics FILTER d.run_id == @run_id AND d.kind == 'id_coverage' "
             "RETURN KEEP(d, '_key', 'targets')",
-            bind_vars={"run_id": run_id}, batch_size=1000, max_runtime=600,
+            bind_vars={"run_id": run_id}, batch_size=1000, ttl=3600, max_runtime=600,
         )
         pending = []
         collection_exists = {}
@@ -1166,6 +1166,7 @@ class ArangoOutputAdapter(OutputAdapter, ArangoAdapter):
             "RETURN KEEP(d, '_key', 'node_type', 'source_id')",
             bind_vars={"run_id": run_id},
             batch_size=1000,
+            ttl=3600,
             max_runtime=600,
         )
         collection_exists = {}
