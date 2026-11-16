@@ -101,11 +101,34 @@ def test_snapshot_rejects_missing_column_and_below_cutoff(tmp_path: Path) -> Non
 
 def test_historical_external_input_still_accepts_database_credentials() -> None:
     credentials = DBCredentials(
-        url="localhost", user="reader", password=None, schema="chembl36"
+        url="localhost", user="reader", password=None
     )
     adapter = DrugNodeAdapter(data_source=ExternalSource(), credentials=credentials)
     assert adapter.version_info.version == "chembl36"
     assert adapter.credentials.schema == "chembl36"
+    assert credentials.schema is None
+
+
+def test_external_chembl_requires_pinned_version_and_versionless_credentials() -> None:
+    credentials = DBCredentials(url="localhost", user="reader", password=None)
+
+    class UnpinnedSource(ExternalSource):
+        def version_info(self):
+            return DatasourceVersionInfo(version=None)
+
+    class MalformedSource(ExternalSource):
+        def version_info(self):
+            return DatasourceVersionInfo(version="latest")
+
+    with pytest.raises(ValueError, match="must pin a version"):
+        DrugNodeAdapter(data_source=UnpinnedSource(), credentials=credentials)
+    with pytest.raises(ValueError, match="must pin a version"):
+        DrugNodeAdapter(data_source=MalformedSource(), credentials=credentials)
+    with pytest.raises(ValueError, match="must not contain a schema"):
+        DrugNodeAdapter(
+            data_source=ExternalSource(),
+            credentials=DBCredentials(url="localhost", user="reader", password=None, schema="chembl36"),
+        )
 
 
 def test_snapshot_preserves_empty_string_and_sql_null(tmp_path: Path) -> None:

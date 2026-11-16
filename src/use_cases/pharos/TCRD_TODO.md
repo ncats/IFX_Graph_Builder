@@ -11,6 +11,11 @@ Status: [ ] not started | [~] in progress | [x] done
 - [ ] Normalize old `pharos_mysql` adapters to use `EquivalentId(...).id_str()` consistently instead of manual `f"{Prefix...}:{...}"` string construction where they emit graph IDs.
 - [ ] Drop `protein.stringid` from the new TCRD export/schema. It is currently populated as a fallback from an `ENSEMBL:ENSP...` xref only when no NCBI Gene ID is present, which is not a meaningful STRING datasource signal; STRING contribution should come from `ncats_ppi` / `STRINGDB`.
 
+## Evidence Identifier Lineage TODO
+
+- [ ] Audit Pharos disease-association adapters for the source-provided gene, transcript, or protein ID on each assertion. Preserve that original target ID in a source-specific graph edge detail before resolver promotion or edge merging; record source and identifier family, and leave it absent when the source provides none. CTD currently loses its GeneID from the edge detail, while DISEASES retains `source_subject_id` in the graph.
+- [ ] Carry each disease assertion's original source target ID through the TCRD converter into MySQL with an association-level field or related table, alongside the resolved `disease.protein_id`. Define how multiple source details on one merged protein–disease edge are represented and validate them against real rows. `disease.did` is the source disease ID and `ncats_d2da.direct` describes disease-hierarchy directness; neither should be repurposed for the source target ID.
+
 ## POUNCE Code Style TODOs
 
 - [ ] Replace `CategoryValue` with `Dict[str, str]` — `CategoryValue` is a dataclass with only `name` and `value` fields (plus an `id` derived from them), used wherever a category label + value pair is stored (e.g. `demographics.categories`, `exposure.category`, `biospecimen.organism_category`). Plain dicts would be simpler, eliminate the class entirely, and map naturally to the `dict_table` pattern in `arango_to_mysql.py` (which already handles `Dict[str, str]` fields as linked key-value tables in MySQL).

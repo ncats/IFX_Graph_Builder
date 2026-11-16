@@ -128,6 +128,18 @@ uses the legacy semantics:
   - disease target-list queries include the selected disease MONDO ID or any
     `ancestry_mondo.oid` row where `ancestor_id` is the selected disease MONDO ID
 
+`ncats_d2da.direct` describes disease hierarchy: `1` links a target association
+to the named disease, while the broader target count rolls up associations from
+descendant diseases. It does not describe whether the source assertion named a
+gene, transcript, or protein. Pharos deliberately resolves gene and transcript
+evidence to canonical protein targets, as it does for CTD disease associations
+and TIGA traits. DISEASES gene assessments therefore do not by themselves
+prevent TCRD export. The graph retains DISEASES source subject IDs in edge
+details; the current MySQL `disease.did` stores the source disease ID, not the
+original gene or protein subject ID.
+Negated DISEASES assertions remain in graph details but are omitted from TCRD
+`disease` and `ncats_d2da` rows, whose schema has no assertion-polarity field.
+
 `pharos319.ncats_disease.direct_target_count` matches the distinct directly
 associated target count through `ncats_d2da.direct = 1`:
 
