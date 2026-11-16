@@ -1152,7 +1152,9 @@ class TCRDOutputConverter(SQLOutputConverter):
 
     def disease_type_converter(self, obj: dict) -> Optional[DiseaseType]:
         """Seeds the disease_type lookup table; one row per new unique source."""
-        details = obj.get('details') or []
+        details = self._iter_disease_details(obj)
+        if obj.get('details') and not details:
+            return None
         source = obj.get('source') or (details[0].get('source') if details else None)
         if not source or source in self._known_disease_types:
             return None
@@ -1178,7 +1180,9 @@ class TCRDOutputConverter(SQLOutputConverter):
     def _iter_disease_details(self, obj: dict):
         details = obj.get('details') or []
         if details:
-            return details
+            # TCRD disease associations have no polarity field. A negated
+            # assertion cannot be represented as a positive target link.
+            return [detail for detail in details if detail.get('negated') is not True]
         source = obj.get('source')
         if source:
             return [{

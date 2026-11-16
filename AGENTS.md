@@ -56,6 +56,7 @@
 - Prefer deriving and persisting datasource metadata (`version`, `version_date`, `download_date`) during download/prep, then have adapters consume it.
 - Keep first-pass ingest scope intentionally minimal, then expand in follow-up iterations.
 - Use stable IDs and consistent prefixes across nodes/edges.
+- For evidence-bearing relationships, preserve the source-provided target identifier in each source-specific edge detail before resolution promotes or collapses the endpoint to a canonical target. Keep its identifier family and source context; do not infer an ID the source did not provide.
 - Validate assumptions against real payloads (field presence, cardinality, identifier shape) before finalizing model changes.
 - Avoid speculative parsing when source text is ambiguous; preserve source text when parsing would be lossy.
 - In adapters, dedupe repeated entities in-memory using deterministic IDs.

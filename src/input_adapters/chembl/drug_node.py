@@ -4,6 +4,7 @@ import re
 import csv
 import gzip
 import json
+from dataclasses import replace
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import List, Dict, Generator
@@ -35,7 +36,12 @@ class ChemblAdapter(MySqlAdapter):
         if data_source.kind is RegistryDatasetKind.EXTERNAL:
             if credentials is None:
                 raise ValueError("External ChEMBL database input requires credentials")
-            MySqlAdapter.__init__(self, credentials)
+            if credentials.schema is not None:
+                raise ValueError("ChEMBL credentials must not contain a schema; pin the release in data_source")
+            schema = self.version_info.version
+            if not isinstance(schema, str) or not re.fullmatch(r"chembl[0-9]+", schema):
+                raise ValueError("External ChEMBL data_source must pin a version such as chembl36")
+            MySqlAdapter.__init__(self, replace(credentials, schema=schema))
         elif data_source.kind is RegistryDatasetKind.SOURCE:
             if pchembl_cutoff < 5:
                 raise ValueError(

@@ -1,3 +1,7 @@
+from src.interfaces.input_adapter import InputAdapter
+from src.models.disease import Disease, DiseaseAssociationDetail, GeneDiseaseEdge, ProteinDiseaseEdge
+from src.models.gene import Gene
+from src.models.protein import Protein
 from src.output_adapters.sql_converters.tcrd import TCRDOutputConverter
 from src.shared.sqlalchemy_tables.pharos_tables_new import DOParent
 
@@ -939,6 +943,72 @@ def test_ncats_d2da_converter_keys_links_off_resolved_disease_id():
     assert len(link_rows) == 1
     assert link_rows[0].ncats_disease_id == 456
     assert link_rows[0].disease_assoc_id == disease_rows[0].id
+    assert link_rows[0].direct == 1
+
+
+def test_promoted_gene_disease_association_exports_to_named_disease():
+    detail = DiseaseAssociationDetail(
+        source="ClinGen",
+        source_id="MONDO:0000001",
+        source_subject_id="HGNC:1234",
+        subject_type="gene",
+    )
+    gene_edge = GeneDiseaseEdge(
+        start_node=Gene(id="IFXGene:SOURCE"),
+        end_node=Disease(id="IFXDisease:DEST", name="Example disease"),
+        details=[detail],
+        gene_assessments=[{"gene_id": "IFXGene:SOURCE", "tier": "curated"}],
+    )
+    promoted = InputAdapter._canonicalize_relationship_class(
+        gene_edge,
+        Protein(id="IFXProtein:TARGET"),
+        gene_edge.end_node,
+    )
+
+    assert isinstance(promoted, ProteinDiseaseEdge)
+    assert promoted.details == [detail]
+    assert promoted.gene_assessments == gene_edge.gene_assessments
+
+    converter = TCRDOutputConverter()
+    converter.id_mapping = {
+        "protein": {"IFXProtein:TARGET": 123},
+        "ncats_disease": {"IFXDisease:DEST": 456},
+    }
+    converter._disease_mondoid_by_id["IFXDisease:DEST"] = "MONDO:0000001"
+    row = {
+        "start_id": promoted.start_node.id,
+        "end_id": promoted.end_node.id,
+        "end_node": {"name": promoted.end_node.name},
+        "details": [
+            detail.to_dict(),
+            DiseaseAssociationDetail(
+                source="ClinGen",
+                source_id="MONDO:0000001",
+                source_subject_id="HGNC:1234",
+                subject_type="gene",
+                negated=True,
+            ).to_dict(),
+        ],
+        "gene_assessments": promoted.gene_assessments,
+        "provenance": "DISEASES\t2.3.5",
+    }
+    associations = converter.disease_converter(row)
+    links = converter.ncats_d2da_converter(row)
+    assert len(associations) == len(links) == 1
+    association = associations[0]
+    link = links[0]
+
+    assert association.protein_id == 123
+    assert association.dtype == "ClinGen"
+    assert association.did == "MONDO:0000001"
+    assert link.ncats_disease_id == 456
+    assert link.disease_assoc_id == association.id
+    assert link.direct == 1
+
+    row["details"] = [row["details"][1]]
+    assert converter.disease_type_converter(row) is None
+    assert converter.disease_converter(row) == []
+    assert converter.ncats_d2da_converter(row) == []
 
 
 def test_affiliate_converter_uses_provider_name_for_display_name():

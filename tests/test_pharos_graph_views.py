@@ -54,7 +54,10 @@ def test_active_pharos_graphs_keep_post_adapters_and_views_in_primary_yaml():
 
 def test_active_target_graphs_use_252_consumer_contract_resolvers():
     expected = {
-        "pharos.yaml": ["TargetConsumerPharosCanonicalResolver"],
+        "pharos.yaml": [
+            "TargetConsumerPharosCanonicalResolver",
+            "TargetConsumerPharosCanonicalResolver",
+        ],
         "impatient_pharos.yaml": ["TargetConsumerPharosCanonicalResolver"],
         "target_graph.yaml": [
             "TargetConsumerGeneResolver",
@@ -79,9 +82,21 @@ def test_active_target_graphs_use_252_consumer_contract_resolvers():
         )
         assert all(
             entry["kwargs"]["data_source"]["snapshot_id"] == "ifx_harmonizers:targets:2.5.2"
-            and entry["kwargs"]["no_match_behavior"] == "Skip"
             for entry in resolvers
         )
+        if name == "pharos.yaml":
+            assert [entry["kwargs"]["types"] for entry in resolvers] == [
+                ["Protein", "Transcript"], ["Gene"],
+            ]
+            assert [entry["kwargs"]["no_match_behavior"] for entry in resolvers] == [
+                "Skip", "Allow",
+            ]
+            assert resolvers[1]["kwargs"]["allow_unmatched_prefixes"] == ["IFXGene"]
+        else:
+            assert all(
+                entry["kwargs"]["no_match_behavior"] == "Skip"
+                for entry in resolvers
+            )
         if name != "target_graph.yaml":
             assert resolvers[0]["kwargs"]["multi_match_behavior"] == "All"
         else:
