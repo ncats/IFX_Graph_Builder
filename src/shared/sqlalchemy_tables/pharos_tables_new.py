@@ -553,6 +553,21 @@ class Xref(Base):
         # You would add that manually via DDL or migrations if needed.
     )
 
+
+class EntityXref(Base):
+    __tablename__ = "entity_xref"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    entity_type = Column(String(16), nullable=False)
+    entity_id = Column(Integer, nullable=False)
+    source_id = Column(String(255, collation="utf8mb4_bin"), nullable=False)
+    match_type = Column(String(128), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("entity_type", "entity_id", "source_id", name="entity_xref_entity_source_unique"),
+        Index("entity_xref_source_lookup", "entity_type", "source_id", "entity_id"),
+    )
+
 class NihList(Base):
     __tablename__ = "nih_list"
 
