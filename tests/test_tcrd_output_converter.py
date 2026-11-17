@@ -1,9 +1,11 @@
 from src.interfaces.input_adapter import InputAdapter
 from src.models.disease import Disease, DiseaseAssociationDetail, GeneDiseaseEdge, ProteinDiseaseEdge
 from src.models.gene import Gene
+from src.models.keyword import ProteinKeywordEdge
+from src.models.ligand import Ligand
 from src.models.protein import Protein
 from src.output_adapters.sql_converters.tcrd import TCRDOutputConverter
-from src.shared.sqlalchemy_tables.pharos_tables_new import DOParent
+from src.shared.sqlalchemy_tables.pharos_tables_new import DOParent, EntityXref, Xref
 
 
 class _FakeQuery:
@@ -443,6 +445,67 @@ def test_ligand_converter_assigns_integer_id_from_mapping():
 
     assert row.id == 77
     assert row.identifier == "LIGAND:EXISTING"
+
+
+def test_entity_xrefs_preserve_full_ids_and_match_types_without_duplicates():
+    converter = TCRDOutputConverter()
+    converter.id_mapping["protein"] = {"IFXProtein:ONE": 11}
+    rows = converter.protein_entity_xref_converter({
+        "id": "IFXProtein:ONE",
+        "xref": ["UniProtKB:P12345", "Symbol:OLD", "UniProtKB:P12345"],
+        "xref_match_types": {
+            "exact": ["UniProtKB:P12345"],
+            "previous_symbol": ["Symbol:OLD"],
+        },
+    })
+    assert [(row.entity_type, row.entity_id, row.source_id, row.match_type) for row in rows] == [
+        ("protein", 11, "Symbol:OLD", "previous_symbol"),
+        ("protein", 11, "UniProtKB:P12345", "exact"),
+    ]
+
+
+def test_entity_xref_dispatch_replaces_identity_xref_but_keeps_keyword_annotations():
+    converter = TCRDOutputConverter()
+    for model, method in [
+        (Protein, 'protein_entity_xref_converter'),
+        (Ligand, 'ligand_entity_xref_converter'),
+        (Disease, 'disease_entity_xref_converter'),
+    ]:
+        converters = converter.get_object_converters(model)
+        assert method in [convert.__name__ for convert in converters]
+        assert not any(convert.__name__ == 'protein_xref_converter' for convert in converters)
+    assert converter.protein_entity_xref_converter({'id': 'P', 'xref': ['UniProtKB:P1']})[0].__class__ is EntityXref
+    assert converter.get_object_converters(ProteinKeywordEdge)[0].__name__ == 'keyword_xref_converter'
+    assert converter.keyword_xref_converter({
+        'start_id': 'P', 'end_node': {'source_id': 'KW-1'}, 'provenance': 'test'
+    }).__class__ is Xref
+
+
+def test_disease_entity_xrefs_only_include_exact_aliases():
+    converter = TCRDOutputConverter()
+    converter.id_mapping["ncats_disease"] = {"IFXDisease:ONE": 12}
+    rows = converter.disease_entity_xref_converter({
+        "id": "IFXDisease:ONE",
+        "xref": ["IFXDisease:ONE", "MESH:D001943"],
+        "xref_match_types": {"exact": ["IFXDisease:ONE", "MESH:D001943"]},
+        "disease_harmonizer_payload": {"non_exact_xrefs": "MESH:D000001=broad"},
+    })
+    assert {row.source_id for row in rows} == {"IFXDisease:ONE", "MESH:D001943"}
+    assert {row.match_type for row in rows} == {"exact"}
+
+
+def test_ligand_entity_xrefs_include_ids_not_in_scalar_columns():
+    converter = TCRDOutputConverter()
+    converter.id_mapping["ligand"] = {"CHEBI:1": 13}
+    rows = converter.ligand_entity_xref_converter({
+        "id": "CHEBI:1",
+        "xref": ["CHEBI:1", "CAS:123-45-6", "DRUGBANK:DB00001"],
+    })
+    assert {(row.entity_type, row.entity_id, row.source_id) for row in rows} == {
+        ("ligand", 13, "CHEBI:1"),
+        ("ligand", 13, "CAS:123-45-6"),
+        ("ligand", 13, "DRUGBANK:DB00001"),
+    }
 
 
 def test_protein_converter_uses_short_graph_name_for_legacy_description():

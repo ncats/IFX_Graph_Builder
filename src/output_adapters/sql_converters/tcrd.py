@@ -27,7 +27,7 @@ from src.models.virus import Virus, ViralPPIDetail, ViralPPIEdge, ViralProtein
 from src.models.word_count import WordCount
 from src.input_adapters.shared.hcop import HCOP_TAXID_TO_SPECIES
 from src.shared.sqlalchemy_tables.pharos_tables_new import (
-    DrgcResource as mysqlDrgcResource, Protein as mysqlProtein, Xref, Alias, Target, TDL_info, T2TC, GO, GOParent, GoA,
+    DrgcResource as mysqlDrgcResource, Protein as mysqlProtein, Xref, EntityXref, Alias, Target, TDL_info, T2TC, GO, GOParent, GoA,
     GeneRif, GeneRif2Pubmed, Protein2Pubmed, Ligand as mysqlLigand, LigandActivity,
     Uberon, UberonParent, Tissue as mysqlTissue, Expression, Gtex,
     Mondo, MondoParent, MondoXref, Disease as mysqlDisease, DiseaseType, DO, DOParent,
@@ -65,7 +65,7 @@ class TCRDOutputConverter(SQLOutputConverter):
         self._converters = {
             # Protein
             Protein: [self.protein_converter, self.target_converter, self.t2tc_converter,
-                      self.protein_alias_converter, self.protein_xref_converter, self.tdl_info_converter,
+                      self.protein_alias_converter, self.protein_entity_xref_converter, self.tdl_info_converter,
                       self.pmscore_converter, self.ptscore_converter, self.patent_count_converter, self.generif_from_publications_converter,
                       self.generif_assoc_from_publications_converter, self.p2p_from_publications_converter],
             # GeneRif
@@ -75,7 +75,7 @@ class TCRDOutputConverter(SQLOutputConverter):
             GoTermHasParent: [self.goterm_parent_converter],
             ProteinGoTermEdge: [self.goa_converter],
             # Ligand
-            Ligand: [self.ligand_converter],
+            Ligand: [self.ligand_converter, self.ligand_entity_xref_converter],
             ProteinLigandEdge: [self.ligand_edge_converter],
             # Tissue / Expression
             Tissue: [self.uberon_converter],
@@ -96,7 +96,7 @@ class TCRDOutputConverter(SQLOutputConverter):
             DOTerm: [self.do_table_converter],
             DOTermParentEdge: [self.do_parent_table_converter],
             # Disease
-            Disease: [self.ncats_disease_converter],
+            Disease: [self.ncats_disease_converter, self.disease_entity_xref_converter],
             DiseaseParentEdge: None,
             MondoDiseaseParentEdge: None,
             DODiseaseParentEdge: None,
@@ -447,17 +447,40 @@ class TCRDOutputConverter(SQLOutputConverter):
             aliases.append(Alias(protein_id=protein_id, type='NCBI Gene ID', value=n.id))
         return aliases
 
-    def protein_xref_converter(self, obj: dict) -> List[Xref]:
-        protein_id = self.resolve_id('protein', obj['id'])
-        ids = [EquivalentId.parse(x) for x in obj['xref']]
+    @staticmethod
+    def _entity_xref_match_types(obj: dict) -> dict[str, str]:
+        by_id: dict[str, set[str]] = {}
+        for match_type, ids in (obj.get('xref_match_types') or {}).items():
+            for source_id in ids:
+                by_id.setdefault(source_id, set()).add(match_type)
+        return {source_id: '|'.join(sorted(types)) for source_id, types in by_id.items()}
+
+    def _entity_xrefs(self, obj: dict, entity_type: str, table: str, ids: list[str]) -> List[EntityXref]:
+        entity_id = self.resolve_id(table, obj['id'])
+        match_types = self._entity_xref_match_types(obj)
         return [
-            Xref(
-                protein_id=protein_id,
-                xtype="Ensembl" if a.type == Prefix.ENSEMBL else a.type.value,
-                value=a.id
+            EntityXref(
+                entity_type=entity_type,
+                entity_id=entity_id,
+                source_id=source_id,
+                match_type=match_types.get(source_id),
             )
-            for a in ids
+            for source_id in sorted(set(ids))
         ]
+
+    def protein_entity_xref_converter(self, obj: dict) -> List[EntityXref]:
+        return self._entity_xrefs(obj, 'protein', 'protein', obj.get('xref') or [])
+
+    def ligand_entity_xref_converter(self, obj: dict) -> List[EntityXref]:
+        return self._entity_xrefs(obj, 'ligand', 'ligand', obj.get('xref') or [])
+
+    def disease_entity_xref_converter(self, obj: dict) -> List[EntityXref]:
+        if not obj['id'].startswith('IFXDisease:'):
+            return []
+        exact = (obj.get('xref_match_types') or {}).get('exact')
+        if not exact or not set(exact).issubset(set(obj.get('xref') or [])):
+            raise ValueError(f"{obj['id']} has invalid exact disease xrefs")
+        return self._entity_xrefs(obj, 'disease', 'ncats_disease', exact)
 
     def pmscore_converter(self, obj: dict) -> List[Pmscore]:
         protein_id = self.resolve_id('protein', obj['id'])
