@@ -197,13 +197,50 @@ def test_obsolete_labels_exclude_aliases_and_edges_from_resolution_and_xrefs(tmp
     )
     assert resolver.resolve_internal([Disease(id="MESH:NEW")])["MESH:NEW"][0].match == "IFXDisease:ONE"
     assert resolver.resolve_internal([Disease(id="MESH:EDGE_OLD")]) == {}
-    with pytest.raises(ValueError, match="obsolete identifier"):
-        resolver.resolve_internal([Disease(id="MESH:OLD")])
+    assert resolver.resolve_internal([Disease(id="MESH:OLD")]) == {}
+    obsolete = resolver.resolve_nodes([Disease(id="MESH:OLD")])
+    assert not obsolete[IdResolver.MatchKeys.matched]
+    unmatched = resolver.parse_flat_node_list_from_map(obsolete)
+    assert len(unmatched) == 1
+    assert unmatched[0].id == "MESH:OLD"
+    assert unmatched[0].resolver_miss is True
+    assert unmatched[0].xref_match_types == {}
     node = resolver.resolve_nodes([Disease(id="IFXDisease:ONE")])[IdResolver.MatchKeys.matched]["IFXDisease:ONE"]
     all_xrefs = {xref.id_str() for xref in node.xref}
     assert "MESH:NEW" in all_xrefs
     assert "MESH:OLD" not in all_xrefs
     assert "MESH:EDGE_OLD" not in all_xrefs
+
+
+
+def test_obsolete_gard_source_stays_unmatched_through_mysql_conversion(tmp_path):
+    old_id = "GARD:0000963"
+    release = _release(tmp_path, [_row(GARD_xref=f"GARD:0000001|{old_id}")], labels=[
+        {"xref_id": old_id, "is_obsolete": "true"},
+        {"xref_id": "MONDO:0000001", "is_obsolete": "false"},
+    ])
+    resolver = DiseaseConsumerResolver(
+        release, cache_path=str(tmp_path / "disease.sqlite"), types=["Disease"],
+        no_match_behavior="Allow", multi_match_behavior="Error",
+    )
+    resolved = resolver.resolve_nodes([
+        Disease(id=old_id, name="RDAS disease", rare_disease=True, provenance="RDAS")
+    ])
+    assert not resolved[IdResolver.MatchKeys.matched]
+    node = resolver.parse_flat_node_list_from_map(resolved)[0]
+    assert node.id == old_id
+    assert node.resolver_miss is True
+    assert node.xref_match_types == {}
+    graph_node = ArangoOutputAdapter.clean_dict(
+        object.__new__(ArangoOutputAdapter), node, convert_dates=True
+    )
+    converter = TCRDOutputConverter()
+    mysql_node = converter.ncats_disease_converter(graph_node)
+    assert mysql_node.ifx_id is None
+    assert mysql_node.gard_rare is True
+    assert converter.disease_entity_xref_converter(graph_node) == []
+    canonical = resolver.resolve_nodes([Disease(id="IFXDisease:ONE")])[IdResolver.MatchKeys.matched]["IFXDisease:ONE"]
+    assert old_id not in {xref.id_str() for xref in canonical.xref}
 
 
 def test_obsolete_primary_and_duplicate_labels_fail(tmp_path):
