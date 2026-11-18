@@ -97,11 +97,6 @@ class DiseaseConsumerResolver(SqliteCacheResolver):
                     )
 
     def resolve_internal(self, input_nodes):
-        obsolete_inputs = sorted({node.id for node in input_nodes} & self.obsolete_ids)
-        if obsolete_inputs:
-            raise ValueError(
-                f"DISEASES input uses obsolete identifier(s): {obsolete_inputs[:10]}"
-            )
         matches = super().resolve_internal(input_nodes)
         for input_id, candidates in matches.items():
             candidates.sort(key=lambda candidate: (candidate.match != input_id, candidate.match))
