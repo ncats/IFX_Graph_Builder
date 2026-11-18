@@ -44,13 +44,20 @@ def gene_features(data_source, *, canonical_only=True):
 
 
 class GeneAdapter(InputAdapter):
-    def __init__(self, data_source):
+    def __init__(self, data_source, canonical_only: bool = True):
         self.data_source = data_source
+        self.canonical_only = canonical_only
+
+    def get_name(self) -> str:
+        name = super().get_name()
+        return name if self.canonical_only else f"{name} [all:{self.data_source.snapshot_id}]"
 
     def get_all(self) -> Generator[List[Gene], None, None]:
         genes = []
         seen = set()
-        for gene_id, columns, attributes in gene_features(self.data_source):
+        for gene_id, columns, attributes in gene_features(
+            self.data_source, canonical_only=self.canonical_only
+        ):
             if gene_id in seen:
                 raise ValueError(f"Duplicate Ensembl GFF3 gene ID: {gene_id}")
             seen.add(gene_id)
@@ -66,7 +73,7 @@ class GeneAdapter(InputAdapter):
                 biotype=attributes.get("biotype"),
             ))
         if not genes:
-            raise ValueError(f"Ensembl GFF3 has no canonical human gene features: {self.data_source.snapshot_id}")
+            raise ValueError(f"Ensembl GFF3 has no selected human gene features: {self.data_source.snapshot_id}")
         yield genes
 
     def get_datasource_name(self) -> DataSourceName:

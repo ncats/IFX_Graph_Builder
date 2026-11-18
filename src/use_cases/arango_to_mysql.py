@@ -6,6 +6,7 @@ dynamically generates MySQL tables via SQLAlchemy, and copies all data over.
 Works with any Arango DB that was built by ArangoOutputAdapter.
 """
 import importlib
+import hashlib
 import json
 import re
 from itertools import product
@@ -45,6 +46,13 @@ def _edge_table_name(schema: dict) -> str:
     from_name = _camel_to_snake(schema["from_collections"][0])
     to_name = _camel_to_snake(schema["to_collections"][0])
     return f"{from_name}_to_{to_name}"
+
+
+def _child_index_name(table_name: str) -> str:
+    name = f"ix_{table_name}_parent"
+    if len(name) <= 64:
+        return name
+    return f"{name[:55]}_{hashlib.sha1(name.encode()).hexdigest()[:8]}"
 
 
 def _is_workbook_artifact_schema(field_schema: dict) -> bool:
@@ -332,7 +340,8 @@ class ArangoToMySqlConverter(ArangoAdapter):
         return None
 
     def _create_child_table(self, parent_name: str, field_name: str, field_schema: dict,
-                            parent_pk_col: str = "id", parent_pk_type=None) -> tuple:
+                            parent_pk_col: str = "id", parent_pk_type=None,
+                            deterministic_ids: bool = False, ordered: bool = False) -> tuple:
         """Create a child table for a list field.
 
         Returns (table, grandchild_tables) where grandchild_tables is
@@ -355,22 +364,28 @@ class ArangoToMySqlConverter(ArangoAdapter):
             }
 
             columns = []
-            if nested_list_subs:
+            if deterministic_ids:
+                columns.append(Column("id", String(255), primary_key=True))
+            elif nested_list_subs:
                 # Auto-increment PK so grandchild rows can reference this table
                 columns.append(Column("id", Integer, primary_key=True))
             columns.append(Column("parent_id", pk_col_type, fk, nullable=False))
+            if ordered:
+                columns.append(Column("ordinal", Integer, nullable=False))
 
             for sub_name, sub_schema in obj_fields.items():
                 if sub_name in _SKIP_FIELDS:
                     continue
                 if sub_name in nested_list_subs:
                     gc_table, _ = self._create_child_table(table_name, sub_name, sub_schema,
-                                                           parent_pk_col="id", parent_pk_type=Integer)
+                                                           parent_pk_col="id",
+                                                           parent_pk_type=String(255) if deterministic_ids else Integer,
+                                                           ordered=deterministic_ids)
                     grandchild_tables[sub_name] = gc_table
                     continue
                 col_type = _SQL_TYPE_MAP.get(sub_schema, Text) if isinstance(sub_schema, str) else Text
                 columns.append(Column(sub_name, col_type, nullable=True))
-            columns.append(Index(f"ix_{table_name}_parent", "parent_id"))
+            columns.append(Index(_child_index_name(table_name), "parent_id"))
         else:
             item_type = field_schema.get("item_type")
             enum_path = field_schema.get("enum")
@@ -384,8 +399,10 @@ class ArangoToMySqlConverter(ArangoAdapter):
             columns = [
                 Column("parent_id", pk_col_type, fk, nullable=False),
                 value_col,
-                Index(f"ix_{table_name}_parent", "parent_id"),
+                Index(_child_index_name(table_name), "parent_id"),
             ]
+            if ordered:
+                columns.append(Column("ordinal", Integer, nullable=False))
 
         return Table(table_name, self.sa_metadata, *columns), grandchild_tables
 
@@ -410,15 +427,37 @@ class ArangoToMySqlConverter(ArangoAdapter):
         table_name = _edge_table_name(schema)
         from_table = _camel_to_snake(schema["from_collections"][0])
         to_table = _camel_to_snake(schema["to_collections"][0])
+        object_list_fields = {
+            field_name: field_schema
+            for field_name, field_schema in schema.get("fields", {}).items()
+            if field_name not in _SKIP_FIELDS and isinstance(field_schema, dict)
+            and self._list_item_object_fields(field_schema) is not None
+        }
+        scalar_list_fields = {
+            field_name for field_name, field_schema in schema.get("fields", {}).items()
+            if field_name not in _SKIP_FIELDS and isinstance(field_schema, dict)
+            and field_schema.get("type") == "list"
+            and isinstance(field_schema.get("item_type"), str)
+            and field_schema.get("item_type") != "object"
+        }
+        if object_list_fields and scalar_list_fields:
+            raise ValueError(
+                f"{name} mixes object-list and scalar-list edge fields; "
+                "row expansion needs an explicit contract"
+            )
         columns = [
             Column("from_id", String(255), ForeignKey(f"{from_table}.id"), nullable=False),
             Column("to_id", String(255), ForeignKey(f"{to_table}.id"), nullable=False),
         ]
+        if object_list_fields:
+            columns.insert(0, Column("id", String(255), primary_key=True))
 
         for field_name, field_schema in schema.get("fields", {}).items():
             if field_name in _SKIP_FIELDS:
                 continue
             if isinstance(field_schema, dict):
+                if self._list_item_object_fields(field_schema) is not None:
+                    continue
                 if (field_schema.get("type") == "list"
                         and isinstance(field_schema.get("item_type"), str)
                         and field_schema.get("item_type") != "object"):
@@ -433,6 +472,16 @@ class ArangoToMySqlConverter(ArangoAdapter):
                       *columns,
                       Index(f"ix_{table_name}_from", "from_id"),
                       Index(f"ix_{table_name}_to", "to_id"))
+        if object_list_fields:
+            detail_tables = getattr(self, "_edge_detail_tables", {})
+            detail_tables[name] = {
+                field_name: self._create_child_table(
+                    table_name, field_name, field_schema,
+                    deterministic_ids=True, ordered=True,
+                )
+                for field_name, field_schema in object_list_fields.items()
+            }
+            self._edge_detail_tables = detail_tables
         return table
 
     def _create_data_table(self, config: dict) -> Table:
@@ -684,10 +733,23 @@ class ArangoToMySqlConverter(ArangoAdapter):
             and isinstance(v.get("item_type"), str) and v.get("item_type") != "object"
             and k not in _SKIP_FIELDS
         }
+        object_list_fields = {
+            k for k, v in fields.items()
+            if k not in _SKIP_FIELDS and isinstance(v, dict)
+            and self._list_item_object_fields(v) is not None
+        }
+        detail_tables = getattr(self, "_edge_detail_tables", {}).get(collection_name, {})
+        if object_list_fields and list_expand_fields:
+            raise ValueError(f"{collection_name} cannot expand scalar and object lists on one edge")
         total = 0
 
         for docs in self._read_collection_paginated(collection_name, batch_size):
             rows = []
+            detail_rows = {field: [] for field in object_list_fields}
+            nested_rows = {
+                field: {sub_name: [] for sub_name in detail_tables[field][1]}
+                for field in object_list_fields
+            }
             for doc in docs:
                 base = {
                     "from_id": doc.get("start_id"),
@@ -695,6 +757,51 @@ class ArangoToMySqlConverter(ArangoAdapter):
                 }
                 for field in scalar_fields:
                     base[field] = doc.get(field)
+                edge_key = doc.get("_key")
+                if object_list_fields:
+                    if not edge_key:
+                        raise ValueError(f"{collection_name} edge is missing _key for detail ownership")
+                    base["id"] = edge_key
+                for field in object_list_fields:
+                    value = doc.get(field)
+                    if value is None:
+                        value = []
+                    if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
+                        raise ValueError(
+                            f"{collection_name} edge {edge_key} has invalid "
+                            f"{field}: expected a list of objects"
+                        )
+                    detail_fields = self._list_item_object_fields(fields[field])
+                    grandchild_tables = detail_tables[field][1]
+                    for ordinal, item in enumerate(value):
+                        detail_id = hashlib.sha256(
+                            f"{edge_key}|{field}|{ordinal}".encode("utf-8")
+                        ).hexdigest()
+                        detail_row = {"id": detail_id, "parent_id": edge_key, "ordinal": ordinal}
+                        for sub_name, sub_schema in detail_fields.items():
+                            sub_value = item.get(sub_name)
+                            if sub_name in grandchild_tables:
+                                if sub_value is None:
+                                    continue
+                                if not isinstance(sub_value, list) or any(
+                                    isinstance(entry, (dict, list)) for entry in sub_value
+                                ):
+                                    raise ValueError(
+                                        f"{collection_name} edge {edge_key} has invalid "
+                                        f"{field}.{sub_name}: expected a list of scalar values"
+                                    )
+                                for sub_ordinal, entry in enumerate(sub_value):
+                                    nested_rows[field][sub_name].append({
+                                        "parent_id": detail_id,
+                                        "ordinal": sub_ordinal,
+                                        "value": entry,
+                                    })
+                            else:
+                                detail_row[sub_name] = (
+                                    json.dumps(sub_value)
+                                    if isinstance(sub_value, (dict, list)) else sub_value
+                                )
+                        detail_rows[field].append(detail_row)
 
                 if not list_expand_fields:
                     rows.append(base)
@@ -728,6 +835,16 @@ class ArangoToMySqlConverter(ArangoAdapter):
                                 print(f"    from_id={r.get('from_id')}  to_id={r.get('to_id')}")
                             if len(bad_rows) > 20:
                                 print(f"    ... and {len(bad_rows) - 20} more")
+                for field, values in detail_rows.items():
+                    child_table, grandchild_tables = detail_tables[field]
+                    for offset in range(0, len(values), 10000):
+                        conn.execute(child_table.insert(), values[offset:offset + 10000])
+                    for sub_name, sub_values in nested_rows[field].items():
+                        grandchild_table = grandchild_tables[sub_name]
+                        for offset in range(0, len(sub_values), 10000):
+                            conn.execute(
+                                grandchild_table.insert(), sub_values[offset:offset + 10000]
+                            )
                 conn.commit()
 
             total += len(docs)

@@ -152,6 +152,11 @@ Provide a repeatable workflow for adding a new data source to the target graph i
   the actual gene IDs and tissue ontology prefixes to understand scope.
 
 ### Gene / protein identifiers
+- **Resolver coverage and graph-edge coverage can differ.** A resolver may
+  index IDs that its source adapter does not emit as nodes (for example genes
+  on noncanonical Ensembl sequences). Compare matched-ID counts with actual
+  edge endpoints in the working graph, and align the resolver and source
+  adapter scopes before describing a match as a linked graph entity.
 - **Check what ID type the file actually uses.** JensenLab TISSUES uses ENSP (Ensembl protein)
   IDs mixed with gene symbols for non-coding entries — not the ENSG IDs the old TCRD code implied.
   Filter with `startswith("ENS")` to accept both ENSP and ENSG while dropping miRNAs, rRNAs, etc.

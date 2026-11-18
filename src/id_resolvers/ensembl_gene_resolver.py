@@ -9,12 +9,15 @@ from typing import Any
 from src.constants import Prefix
 from src.id_resolvers.sqlite_cache_resolver import MatchingPair, SqliteCacheResolver
 from src.input_adapters.ensembl.gene import gene_features
+from src.interfaces.id_resolver import IdMatch
+from src.models.gene import Gene
 from src.models.node import EquivalentId
 
 
 ENTREZ_FILE = "ensembl_entrez.tsv.gz"
 RESOLVER_CONTRACT_VERSION = "2"
 _HGNC_ACCESSION = re.compile(r"\bAcc:HGNC:(\d+)\b")
+_VERSIONED_GENE = re.compile(r"^(ENSEMBL:ENSG\d+)\.\d+$")
 
 
 class EnsemblGeneResolver(SqliteCacheResolver):
@@ -34,6 +37,31 @@ class EnsemblGeneResolver(SqliteCacheResolver):
             f"{self.data_source.snapshot_id}:"
             f"ensembl-gene-resolver-{RESOLVER_CONTRACT_VERSION}"
         )
+
+    def resolve_internal(self, input_nodes):
+        matches = super().resolve_internal(input_nodes)
+        fallback = {}
+        for node in input_nodes:
+            if node.id in matches:
+                continue
+            versioned = _VERSIONED_GENE.fullmatch(node.id)
+            if versioned:
+                fallback[node.id] = versioned.group(1)
+        if fallback:
+            base_matches = super().resolve_internal([Gene(id=base) for base in set(fallback.values())])
+            for source_id, base in fallback.items():
+                if base not in base_matches:
+                    continue
+                matches[source_id] = [
+                    IdMatch(
+                        input=source_id,
+                        match=result.match,
+                        equivalent_ids=result.equivalent_ids,
+                        context=[*(result.context or []), "version_free_fallback"],
+                    )
+                    for result in base_matches[base]
+                ]
+        return matches
 
     def matching_ids(self) -> Generator[MatchingPair, Any, None]:
         emitted: set[MatchingPair] = set()

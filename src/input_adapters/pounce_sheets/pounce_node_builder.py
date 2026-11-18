@@ -12,6 +12,7 @@ from src.input_adapters.pounce_sheets.constants import ExperimentWorkbook, Proje
 
 
 _NA_VALUES = {"NA", "N/A", ""}
+_ENSEMBL_GENE_ID = re.compile(r"^ENSG\d+(?:\.\d+)?$")
 
 from src.input_adapters.pounce_sheets.parsed_classes import ParsedPerson, ParsedProject
 from src.input_adapters.pounce_sheets.parsed_pounce_data import ParsedPounceData
@@ -28,7 +29,7 @@ from src.models.pounce.dataset import Dataset, ExperimentDatasetEdge, DatasetRun
 from src.models.pounce.demographics import Demographics
 from src.models.pounce.exposure import Exposure
 from src.models.pounce.stats_result import StatsResult, ComparisonColumn, ExperimentStatsResultEdge, StatsResultGeneEdge, StatsResultMetaboliteEdge, StatsResultPersonEdge, StatsResultProteinEdge
-from src.models.pounce.experiment import Experiment, PlatformType, ProjectExperimentEdge, ExperimentPersonEdge, RunBiosample, BiosampleRunBiosampleEdge, ExperimentBiospecimenEdge
+from src.models.pounce.experiment import Experiment, PlatformType, ProjectExperimentEdge, ExperimentPersonEdge, ExperimentMeasuredGeneDetail, ExperimentMeasuredGeneEdge, RunBiosample, BiosampleRunBiosampleEdge, ExperimentBiospecimenEdge
 from src.models.pounce.exposure import BiosampleExposureEdge
 from src.models.pounce.project import Project, AccessLevel, ProjectType, Person, ProjectPersonEdge, \
     ProjectBiosampleEdge, LabGroup
@@ -399,7 +400,10 @@ class PounceNodeBuilder:
         sheet_names = exp_parser.sheet_dfs.keys()
         if ExperimentWorkbook.GeneMetaSheet.name in sheet_names:
             if ExperimentWorkbook.GeneMapSheet.name in sheet_names:
-                yield from self._parse_genes(experiment_obj, exp_parser)
+                yield from self._parse_genes(
+                    experiment_obj, exp_parser,
+                    valid_run_ids={str(run.run_biosample_id) for run in exp_data.run_biosamples if run.run_biosample_id},
+                )
             elif not exp_parser.sheet_dfs[ExperimentWorkbook.GeneMetaSheet.name].empty:
                 raise ValueError(
                     f"{exp_parser.file_path} / GeneMeta: populated gene metadata "
@@ -569,13 +573,15 @@ class PounceNodeBuilder:
 
     # --- Analyte parsing ---
 
-    def _parse_genes(self, experiment_obj: Experiment, parser: ExcelsheetParser
+    def _parse_genes(self, experiment_obj: Experiment, parser: ExcelsheetParser,
+                     valid_run_ids: Optional[set[str]] = None
                      ) -> Generator[List[Union[Node, Relationship]], None, None]:
         """Parse gene data from GeneMeta sheet."""
         column_map = parser.get_parameter_map(ExperimentWorkbook.GeneMapSheet.name)
         gene_id_col = column_map.get(ExperimentWorkbook.GeneMapSheet.Key.gene_id)
         symbol_col = column_map.get(ExperimentWorkbook.GeneMapSheet.Key.hgnc_gene_symbol)
         biotype_col = column_map.get(ExperimentWorkbook.GeneMapSheet.Key.gene_biotype)
+        run_col = column_map.get("runbiosample")
 
         gene_meta = parser.sheet_dfs[ExperimentWorkbook.GeneMetaSheet.name]
         if (not gene_meta.empty
@@ -585,25 +591,60 @@ class PounceNodeBuilder:
                 "requires a GeneMap gene_id mapping to an existing column"
             )
 
+        is_single_cell = bool(experiment_obj and experiment_obj.platform_type == PlatformType.SC_RNASEQ)
+        if valid_run_ids is None:
+            valid_run_ids = set(self._ctx.run_biosample_by_original_id)
+
         genes = []
         gene_edges = []
+        experiment_gene_edges = []
         for _, row in parser.sheet_dfs[ExperimentWorkbook.GeneMetaSheet.name].iterrows():
             gene_id = row.get(gene_id_col) if gene_id_col else None
             if not gene_id:
                 continue
-            gene_ensembl_id = EquivalentId(id=gene_id, type=Prefix.ENSEMBL).id_str()
+            raw_gene_id = str(gene_id)
+            source_gene_id = raw_gene_id.strip()
+            is_ensembl_gene = bool(_ENSEMBL_GENE_ID.fullmatch(source_gene_id))
+            measured_id = (
+                EquivalentId(id=source_gene_id, type=Prefix.ENSEMBL).id_str()
+                if is_ensembl_gene
+                else f"{experiment_obj.id}:measured_gene:{source_gene_id}"
+            )
             gene_obj = MeasuredGene(
-                id=gene_ensembl_id,
+                id=measured_id,
                 symbol=row.get(symbol_col) if symbol_col else None,
                 biotype=row.get(biotype_col) if biotype_col else None
             )
             genes.append(gene_obj)
-            self._ctx.gene_by_raw_id[str(gene_id)] = gene_obj
+            self._ctx.gene_by_raw_id[raw_gene_id] = gene_obj
+            self._ctx.gene_by_raw_id[source_gene_id] = gene_obj
 
-            gene_edges.append(MeasuredGeneEdge(start_node=gene_obj, end_node=Gene(id=gene_ensembl_id)))
+            if is_single_cell:
+                run_ids = self._split_pipe(row.get(run_col)) if run_col else []
+                unknown_run_ids = sorted(set(run_ids) - valid_run_ids)
+                if unknown_run_ids:
+                    raise ValueError(
+                        f"{parser.file_path} / GeneMeta: {source_gene_id} references unknown "
+                        f"runbiosample IDs {unknown_run_ids}"
+                    )
+                experiment_gene_edges.append(ExperimentMeasuredGeneEdge(
+                    start_node=experiment_obj,
+                    end_node=gene_obj,
+                    details=[ExperimentMeasuredGeneDetail(
+                        source_feature_id=raw_gene_id,
+                        source_symbol=row.get(symbol_col) if symbol_col else None,
+                        source_biotype=row.get(biotype_col) if biotype_col else None,
+                        run_biosample_ids=run_ids,
+                    )],
+                ))
+
+            if is_ensembl_gene:
+                gene_edges.append(MeasuredGeneEdge(start_node=gene_obj, end_node=Gene(id=measured_id)))
 
         yield genes
         yield gene_edges
+        if experiment_gene_edges:
+            yield experiment_gene_edges
 
     def _parse_metabolites(self, experiment_obj: Experiment, parser: ExcelsheetParser
                            ) -> Generator[List[Union[Node, Relationship]], None, None]:
