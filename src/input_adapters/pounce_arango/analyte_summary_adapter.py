@@ -8,9 +8,11 @@ from src.models.pounce.project import ProjectType
 from src.models.pounce.stats_summary import AnalyteSummary
 from src.shared.arango_adapter import ArangoAdapter
 from src.shared.db_credentials import DBCredentials
+from src.shared.record_merger import FieldConflictBehavior
 
 
 class AnalyteSummaryAdapter(InputAdapter, ArangoAdapter):
+    field_conflict_behavior = FieldConflictBehavior.KeepLast
 
     def __init__(self, credentials: DBCredentials, database_name: str):
         ArangoAdapter.__init__(self, credentials=credentials, database_name=database_name)

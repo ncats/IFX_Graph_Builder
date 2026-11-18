@@ -6,6 +6,7 @@ def main():
         build_name="pounce",
         primary_yaml="./src/use_cases/pounce/pounce.yaml",
         post_yaml="./src/use_cases/pounce/pounce_aql_post.yaml",
+        refresh_post_on_resume=True,
     )
 
 

@@ -12,6 +12,7 @@ from src.models.pounce.project import Project, AccessLevel
 from src.models.pounce.experiment import Experiment, ExperimentBiospecimenEdge, RunBiosample
 from src.models.protein import MeasuredProtein
 from src.models.pounce.dataset import Dataset, DatasetProteinEdge
+from src.models.pounce.raw_data_files import RawDataFiles, ExperimentRawDataFilesEdge, RunBiosampleRawDataFilesEdge
 from src.models.pounce.workbook_artifact import WorkbookArtifact
 from src.constants import DataSourceName
 
@@ -78,10 +79,72 @@ def test_direct_build_rejects_sc_stats_without_gene_id(monkeypatch):
     monkeypatch.setattr(PounceNodeBuilder, "_project_node", lambda *args, **kwargs: object())
     monkeypatch.setattr(PounceNodeBuilder, "_person_nodes_and_edges", lambda *args: ([], []))
     monkeypatch.setattr(PounceNodeBuilder, "_biosample_nodes", lambda *args: iter(()))
-    with pytest.raises(ValueError, match="stats.xlsx.*sc_rnaseq without gene_id"):
+    with pytest.raises(ValueError, match="stats.xlsx.*sc_rnaseq gene-level.*GeneMeta"):
         list(PounceNodeBuilder().build(
             "project.xlsx", ["sc.xlsx"], ["stats.xlsx"], mock_parser,
         ))
+
+
+def test_direct_build_rejects_invalid_sc_file_manifest(monkeypatch):
+    from types import SimpleNamespace
+    from src.core.validator import ValidationError
+
+    project_data = ParsedPounceData(project=ParsedProject(project_name="P1"))
+    experiment_data = ParsedPounceData(
+        experiments=[ParsedExperiment(platform_type="sc_rnaseq")],
+    )
+    parser = MagicMock()
+    parser.parse_project.return_value = (project_data, [])
+    parser.parse_experiment.return_value = (experiment_data, [ValidationError(
+        severity="error", entity="raw_data_files", field="seurat_file",
+        sheet="RawData", message="provide a complete trio or seurat_file",
+    )])
+    monkeypatch.setattr(
+        "src.input_adapters.pounce_sheets.pounce_node_builder.load_pounce_workbook",
+        lambda path, role: SimpleNamespace(parser=SimpleNamespace(file_path=path)),
+    )
+    monkeypatch.setattr(PounceNodeBuilder, "_project_node", lambda *args, **kwargs: object())
+    monkeypatch.setattr(PounceNodeBuilder, "_person_nodes_and_edges", lambda *args: ([], []))
+    monkeypatch.setattr(PounceNodeBuilder, "_biosample_nodes", lambda *args: iter(()))
+    with pytest.raises(ValueError, match="sc.xlsx / RawData: provide a complete trio"):
+        list(PounceNodeBuilder().build("project.xlsx", ["sc.xlsx"], [None], parser))
+
+
+def test_direct_build_rejects_sc_stats_gene_missing_from_gene_meta(monkeypatch):
+    from types import SimpleNamespace
+    from src.core.validator import ValidationError
+    from src.input_adapters.pounce_sheets.parsed_classes import ParsedGene
+
+    parser = MagicMock()
+    parser.parse_project.return_value = (
+        ParsedPounceData(project=ParsedProject(project_name="P1")), [],
+    )
+    parser.parse_experiment.return_value = (
+        ParsedPounceData(
+            experiments=[ParsedExperiment(platform_type="sc_rnaseq")],
+            genes=[ParsedGene(gene_id="ENSG1")],
+            param_maps={"GeneMap": {"gene_id": "GeneID"}},
+        ), [],
+    )
+    parser.parse_stats_results.return_value = (ParsedPounceData(), [ValidationError(
+        severity="error", entity="stats_results", field="gene_id", sheet="EffectSize",
+        message="gene_id 'ENSG2' in EffectSize does not exist in paired experiment's GeneMeta",
+    )])
+    workbooks = {
+        "project.xlsx": SimpleNamespace(parser=SimpleNamespace(file_path="project.xlsx")),
+        "sc.xlsx": SimpleNamespace(parser=SimpleNamespace(file_path="sc.xlsx")),
+        "stats.xlsx": SimpleNamespace(parser=SimpleNamespace(file_path="stats.xlsx")),
+    }
+    monkeypatch.setattr(
+        "src.input_adapters.pounce_sheets.pounce_node_builder.load_pounce_workbook",
+        lambda path, role: workbooks[path],
+    )
+    monkeypatch.setattr(PounceNodeBuilder, "_project_node", lambda *args, **kwargs: object())
+    monkeypatch.setattr(PounceNodeBuilder, "_person_nodes_and_edges", lambda *args: ([], []))
+    monkeypatch.setattr(PounceNodeBuilder, "_biosample_nodes", lambda *args: iter(()))
+    with pytest.raises(ValueError, match="stats.xlsx / EffectSize: gene_id 'ENSG2'"):
+        list(PounceNodeBuilder().build("project.xlsx", ["sc.xlsx"], ["stats.xlsx"], parser))
+    assert parser.parse_stats_results.call_args.kwargs["valid_gene_ids"] == {"ENSG1"}
 
 
 def test_missing_stats_experiment_does_not_require_its_analyte_in_other_stats_map():
@@ -291,6 +354,31 @@ def test_experiment_nodes_emit_deduped_experiment_biospecimen_edges():
     assert experiment_biospecimen_edges[0].end_node.id == "PROJ001-SPEC1"
 
 
+def test_biospecimen_ids_with_repeated_whitespace_share_graph_identity():
+    builder = PounceNodeBuilder()
+    project = Project(id="PROJ001", name="Test")
+    project_data = ParsedPounceData(
+        biosamples=[
+            ParsedBiosample(biosample_id="BS1", biosample_type="sample"),
+            ParsedBiosample(biosample_id="BS2", biosample_type="sample"),
+        ],
+        biospecimens=[
+            ParsedBiospecimen(biospecimen_id="CTBPRO2,  GFP-HUVECs", biospecimen_type="specimen"),
+            ParsedBiospecimen(biospecimen_id="CTBPRO2, GFP-HUVECs", biospecimen_type="specimen"),
+        ],
+    )
+
+    batches = list(builder._biosample_nodes(project, project_data))
+    biospecimens = batches[0]
+    biosamples = batches[1]
+    assert len(biospecimens) == 1
+    assert biospecimens[0].id == "PROJ001-CTBPRO2, GFP-HUVECs"
+    assert biospecimens[0].original_id == "CTBPRO2,  GFP-HUVECs"
+    assert len({sample.id for sample in biosamples}) == 2
+    assert len(batches[-1]) == 2
+    assert all(edge.end_node.id == biospecimens[0].id for edge in batches[-1])
+
+
 def test_experiment_nodes_propagate_run_biosample_batch():
     builder = PounceNodeBuilder()
     project = Project(id="PROJ001", name="Test")
@@ -320,6 +408,121 @@ def test_experiment_nodes_propagate_run_biosample_batch():
 
     assert len(run_biosamples) == 1
     assert run_biosamples[0].batch == "3"
+
+
+def test_geo_metadata_reaches_project_experiment_and_run_biosample():
+    builder = PounceNodeBuilder()
+    parsed_project = ParsedProject(
+        project_name="GEO study", source_record="https://example.org/GSE1",
+        geo_title="Deposited title", geo_submission_date="Jun 11 2026",
+        curation_notes="Mapped from GEO",
+    )
+    project = builder._project_node(parsed_project)
+    assert project.source_record == "https://example.org/GSE1"
+    assert project.geo_title == "Deposited title"
+    assert project.curation_notes == "Mapped from GEO"
+
+    exp_data = ParsedPounceData(
+        experiments=[ParsedExperiment(
+            experiment_name="GEO experiment", geo_submission_date="Jun 11 2026",
+            curation_notes="Experiment curation",
+        )],
+        run_biosamples=[ParsedRunBiosample(
+            run_biosample_id="R1", biosample_id="B1", runbiosample_file="GSM1",
+            geo_sample_accession="GSM1", geo_sample_url="https://example.org/SAMN1",
+            geo_sra_url="https://example.org/SRX1", replicate_label="rep 1",
+            library_text="GRCh38",
+        )],
+    )
+    exp_parser = MagicMock(spec=ExcelsheetParser)
+    exp_parser.file_path = "experiment.xlsx"
+    exp_parser.sheet_dfs = {}
+    with patch.object(PounceNodeBuilder, "_compute_experiment_counts", return_value=(0, 0)):
+        batches = list(builder._experiment_nodes(project, exp_data, exp_parser))
+    nodes = [node for batch in batches for node in batch]
+    experiment = next(node for node in nodes if isinstance(node, Experiment))
+    run = next(node for node in nodes if isinstance(node, RunBiosample))
+    assert experiment.geo_submission_date == "Jun 11 2026"
+    assert experiment.curation_notes == "Experiment curation"
+    assert run.geo_sample_accession == "GSM1"
+    assert run.geo_sra_url == "https://example.org/SRX1"
+    assert run.source_file_name == "GSM1"
+    assert run.library_text == "GRCh38"
+
+
+def test_geo_biosample_characteristics_and_raw_data_notes_are_preserved():
+    builder = PounceNodeBuilder()
+    project = Project(id="PROJ001", name="GEO study")
+    project_data = ParsedPounceData(
+        biosamples=[ParsedBiosample(
+            biosample_id="B1", biosample_type="sample",
+            geo_characteristics='{"tissue": "brain"}',
+        )],
+        biospecimens=[ParsedBiospecimen(
+            biospecimen_id="S1", biospecimen_type="specimen",
+        )],
+    )
+    biosample_batches = list(builder._biosample_nodes(project, project_data))
+    biosample = next(
+        node for batch in biosample_batches for node in batch
+        if getattr(node, "original_id", None) == "B1"
+    )
+    assert biosample.geo_characteristics == '{"tissue": "brain"}'
+
+    parser = MagicMock(spec=ExcelsheetParser)
+    parser.sheet_dfs = {"RawData": pd.DataFrame()}
+    parser.safe_get_string.side_effect = lambda _sheet, key: {
+        "reported_data_processing": "Deposited process",
+        "data_representation": "Count matrix",
+        "source_feature_type_note": "Source feature note",
+    }.get(key)
+    batches = list(builder._parse_data_matrix(
+        Experiment(id="E1"), "RawDataMeta", "RawData", parser=parser,
+    ))
+    dataset = next(node for batch in batches for node in batch if isinstance(node, Dataset))
+    assert dataset.reported_data_processing == "Deposited process"
+    assert dataset.data_representation == "Count matrix"
+    assert dataset.source_feature_type_note == "Source feature note"
+
+
+def test_sc_raw_data_emits_file_references_without_matrix_dataset():
+    builder = PounceNodeBuilder()
+    run = RunBiosample(id="P1-R1")
+    builder._ctx.run_biosample_by_original_id["R1"] = run
+    parser = MagicMock(spec=ExcelsheetParser)
+    parser.sheet_dfs = {"RawData": pd.DataFrame([{
+        "runbiosample_id": "R1", "seurat_file": "https://example.org/object.rds",
+        "GEO_sample": "GSM1", "feature_count": 100,
+    }])}
+    batches = list(builder._parse_sc_raw_data_files(Experiment(id="E1"), parser))
+    records = [record for batch in batches for record in batch]
+    file_set = next(record for record in records if isinstance(record, RawDataFiles))
+    assert file_set.id.startswith("E1:raw_data_files:")
+    assert file_set.seurat_file == "https://example.org/object.rds"
+    assert file_set.geo_sample == "GSM1"
+    assert file_set.feature_count == 100
+    assert not any(isinstance(record, Dataset) for record in records)
+    assert any(isinstance(record, ExperimentRawDataFilesEdge) for record in records)
+    assert any(isinstance(record, RunBiosampleRawDataFilesEdge) for record in records)
+
+
+def test_sc_experiment_routes_raw_data_to_file_manifest():
+    builder = PounceNodeBuilder()
+    project = Project(id="P1", name="Single cell")
+    exp_data = ParsedPounceData(
+        experiments=[ParsedExperiment(experiment_name="SC", platform_type="sc_rnaseq")],
+        run_biosamples=[ParsedRunBiosample(run_biosample_id="R1", biosample_id="B1")],
+    )
+    parser = MagicMock(spec=ExcelsheetParser)
+    parser.file_path = "sc.xlsx"
+    parser.sheet_dfs = {"RawData": pd.DataFrame([{
+        "runbiosample_id": "R1", "seurat_file": "https://example.org/object.rds",
+    }])}
+    with patch.object(PounceNodeBuilder, "_compute_experiment_counts", return_value=(0, 1)):
+        batches = list(builder._experiment_nodes(project, exp_data, parser))
+    records = [record for batch in batches for record in batch]
+    assert any(isinstance(record, RawDataFiles) for record in records)
+    assert not any(isinstance(record, Dataset) for record in records)
 
 
 def test_experiment_nodes_inherit_project_access():

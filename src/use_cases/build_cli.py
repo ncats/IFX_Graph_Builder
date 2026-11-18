@@ -83,6 +83,7 @@ def run_arango_build_cli(
     build_name: str,
     primary_yaml: str,
     post_yaml: str | None = None,
+    refresh_post_on_resume: bool = False,
 ):
     args = parse_common_build_args(build_name)
 
@@ -99,4 +100,9 @@ def run_arango_build_cli(
 
     if post_yaml:
         post_builder = BuildGraphFromYaml(yaml_file=post_yaml)
-        post_builder.do_etl(resume=args.resume)
+        refresh_post = args.resume and refresh_post_on_resume
+        post_builder.do_etl(
+            resume=args.resume,
+            rerun_completed=refresh_post,
+            run_id=f"{post_yaml}:refresh" if refresh_post else None,
+        )

@@ -15,12 +15,14 @@ parser.add_argument(
     action="store_true",
     help="Print the full list of unmapped IDs in coverage output."
 )
+parser.add_argument(
+    "--yaml", default="./src/use_cases/pounce/pounce.yaml",
+    help="POUNCE build YAML to validate (default: pounce.yaml)",
+)
 args = parser.parse_args()
 UNMAPPED_PREVIEW_LIMIT = 50
 
-# yaml_file = "./src/use_cases/pounce/test_pounce_validation.yaml"
-yaml_file = "./src/use_cases/pounce/pounce.yaml"
-# yaml_file = "./src/use_cases/working.yaml"
+yaml_file = args.yaml
 
 config = ETL_Config(yaml_file)
 resolver_map = {t: r for r in config.resolvers.values() for t in r.types}

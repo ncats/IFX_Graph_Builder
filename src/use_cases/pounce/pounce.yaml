@@ -152,6 +152,28 @@ input_adapters:
         - null
       validators_config: ./src/use_cases/pounce/pounce_validators.yaml
 
+  - import: ./src/input_adapters/pounce_sheets/pounce_input_adapter.py
+    class: PounceInputAdapter
+    kwargs:
+      checkpoint_id: geo:GSE318016
+      project_file: ./input_files/manual/pounce/gse318016/GSE318016_Project.xlsx
+      experiment_files:
+        - ./input_files/manual/pounce/gse318016/exp0_GSE318016_Experiment.xlsx
+      stats_results_files:
+        - null
+      validators_config: ./src/use_cases/pounce/pounce_validators.yaml
+
+  - import: ./src/input_adapters/pounce_sheets/pounce_input_adapter.py
+    class: PounceInputAdapter
+    kwargs:
+      checkpoint_id: geo:GSE335200
+      project_file: ./input_files/manual/pounce/gse335200/GSE335200_Project.xlsx
+      experiment_files:
+        - ./input_files/manual/pounce/gse335200/exp0_GSE335200_Experiment.xlsx
+      stats_results_files:
+        - null
+      validators_config: ./src/use_cases/pounce/pounce_validators.yaml
+
 graph_views:
   - id: pounce_unresolved_analyte_summary
     label: POUNCE Unresolved Analyte Summary
