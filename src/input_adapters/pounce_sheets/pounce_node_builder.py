@@ -33,6 +33,7 @@ from src.models.pounce.exposure import BiosampleExposureEdge
 from src.models.pounce.project import Project, AccessLevel, ProjectType, Person, ProjectPersonEdge, \
     ProjectBiosampleEdge, LabGroup
 from src.models.pounce.workbook_artifact import WorkbookArtifact
+from src.models.pounce.raw_data_files import RawDataFiles, ExperimentRawDataFilesEdge, RunBiosampleRawDataFilesEdge
 
 
 @dataclass
@@ -123,9 +124,27 @@ class PounceNodeBuilder:
 
         for exp_file, stats_file in _iter_pairs(experiment_files, stats_results_files):
             exp_parser = load_pounce_workbook(exp_file, "experiment").parser
-            exp_data, _ = parser.parse_experiment(exp_parser)
+            exp_data, exp_issues = parser.parse_experiment(exp_parser)
+            is_single_cell = bool(exp_data.experiments and exp_data.experiments[0].platform_type == "sc_rnaseq")
+            if is_single_cell:
+                errors = [issue for issue in exp_issues if issue.severity == "error"]
+                if errors:
+                    first = errors[0]
+                    raise ValueError(f"{exp_file} / {first.sheet or 'experiment'}: {first.message}")
             stats_parser = load_pounce_workbook(stats_file, "stats").parser if stats_file else None
-            stats_data, _ = parser.parse_stats_results(stats_parser) if stats_parser else (None, [])
+            if stats_parser and is_single_cell:
+                gene_ids = {str(g.gene_id).strip() for g in exp_data.genes if g.gene_id}
+                run_ids = {str(rb.run_biosample_id).strip() for rb in exp_data.run_biosamples if rb.run_biosample_id}
+                stats_data, stats_issues = parser.parse_stats_results(
+                    stats_parser, valid_gene_ids=gene_ids or None,
+                    valid_run_biosample_ids=run_ids or None, expected_analyte="gene",
+                )
+                errors = [issue for issue in stats_issues if issue.severity == "error"]
+                if errors:
+                    first = errors[0]
+                    raise ValueError(f"{stats_file} / {first.sheet or 'stats results'}: {first.message}")
+            else:
+                stats_data, _ = parser.parse_stats_results(stats_parser) if stats_parser else (None, [])
             if stats_parser:
                 sc_stats_issue = PounceParser._sc_gene_stats_issue(exp_data, stats_parser)
                 if sc_stats_issue:
@@ -158,7 +177,11 @@ class PounceNodeBuilder:
             keywords=parsed_project.keywords or [],
             project_type=[pt for raw in (parsed_project.project_type or []) if (pt := ProjectType.parse(raw)) is not None],
             rare_disease_focus=parsed_project.rd_tag if parsed_project.rd_tag is not None else False,
-            sample_preparation=parsed_project.biosample_preparation
+            sample_preparation=parsed_project.biosample_preparation,
+            source_record=parsed_project.source_record,
+            geo_submission_date=parsed_project.geo_submission_date,
+            geo_title=parsed_project.geo_title,
+            curation_notes=parsed_project.curation_notes,
         )
 
     @staticmethod
@@ -189,7 +212,9 @@ class PounceNodeBuilder:
         for i, parsed_bs in enumerate(project_data.biosamples):
             parsed_spec = project_data.biospecimens[i]
 
-            biospecimen_id = parsed_spec.biospecimen_id
+            # Submitter IDs may differ only in repeated whitespace. Those forms
+            # produce the same Arango key, so use one stable graph identity.
+            biospecimen_id = re.sub(r"\s+", " ", str(parsed_spec.biospecimen_id)).strip()
             full_biospecimen_id = f"{proj_obj.id}-{biospecimen_id}"
             if full_biospecimen_id not in biospecimens:
                 organism_category = self._make_category_value(
@@ -201,7 +226,7 @@ class PounceNodeBuilder:
 
                 biospecimens[full_biospecimen_id] = Biospecimen(
                     id=full_biospecimen_id,
-                    original_id=biospecimen_id,
+                    original_id=parsed_spec.biospecimen_id,
                     type=parsed_spec.biospecimen_type,
                     description=parsed_spec.biospecimen_description,
                     organism=parsed_spec.organism_names,
@@ -220,7 +245,8 @@ class PounceNodeBuilder:
                 original_id=parsed_bs.biosample_id,
                 type=parsed_bs.biosample_type,
                 tracking=self._to_null_if_na(parsed_bs.biosample_tracking),
-                demographics=demographics
+                demographics=demographics,
+                geo_characteristics=parsed_bs.geo_characteristics,
             )
             biosamples.append(biosample_obj)
             self._ctx.biosample_by_original_id[str(parsed_bs.biosample_id)] = biosample_obj
@@ -300,6 +326,8 @@ class PounceNodeBuilder:
             metabolite_identification_description=parsed.metabolite_identification_description,
             experiment_data_file=parsed.experiment_data_file,
             attached_files=parsed.attached_files or [],
+            geo_submission_date=parsed.geo_submission_date,
+            curation_notes=parsed.curation_notes,
             calculated_properties={
                 "analyte_count": float(analyte_count),
                 "biosample_count": float(biosample_count),
@@ -332,7 +360,15 @@ class PounceNodeBuilder:
                 biological_replicate_number=self._parse_int(parsed_rb.biological_replicate_number),
                 technical_replicate_number=self._parse_int(parsed_rb.technical_replicate_number),
                 run_order=self._parse_int(parsed_rb.runbiosample_run_order),
-                batch=parsed_rb.batch
+                batch=parsed_rb.batch,
+                source_file_name=parsed_rb.runbiosample_file,
+                replicate_label=parsed_rb.replicate_label,
+                geo_sample_accession=parsed_rb.geo_sample_accession,
+                geo_sample_url=parsed_rb.geo_sample_url,
+                geo_sra_url=parsed_rb.geo_sra_url,
+                sample_description=parsed_rb.sample_description,
+                source_name=parsed_rb.source_name,
+                library_text=parsed_rb.library_text,
             )
             run_biosamples.append(run_biosample_obj)
             self._ctx.run_biosample_by_original_id[str(run_biosample_id)] = run_biosample_obj
@@ -374,17 +410,20 @@ class PounceNodeBuilder:
         if ExperimentWorkbook.MetabMetaSheet.name in sheet_names:
             yield from self._parse_metabolites(experiment_obj, exp_parser)
         if ExperimentWorkbook.RawDataSheet.name in sheet_names:
-            gene_map = (exp_parser.get_parameter_map(ExperimentWorkbook.GeneMapSheet.name)
-                        if ExperimentWorkbook.GeneMapSheet.name in sheet_names else {})
-            analyte_id_col = gene_map.get(ExperimentWorkbook.GeneMapSheet.Key.gene_id)
-            yield from self._parse_data_matrix(
-                experiment_obj,
-                meta_sheet=ExperimentWorkbook.RawDataMetaSheet.name,
-                data_sheet=ExperimentWorkbook.RawDataSheet.name,
-                analyte_id_col=analyte_id_col,
-                data_type="raw data",
-                parser=exp_parser
-            )
+            if experiment_obj.platform_type == PlatformType.SC_RNASEQ:
+                yield from self._parse_sc_raw_data_files(experiment_obj, exp_parser)
+            else:
+                gene_map = (exp_parser.get_parameter_map(ExperimentWorkbook.GeneMapSheet.name)
+                            if ExperimentWorkbook.GeneMapSheet.name in sheet_names else {})
+                analyte_id_col = gene_map.get(ExperimentWorkbook.GeneMapSheet.Key.gene_id)
+                yield from self._parse_data_matrix(
+                    experiment_obj,
+                    meta_sheet=ExperimentWorkbook.RawDataMetaSheet.name,
+                    data_sheet=ExperimentWorkbook.RawDataSheet.name,
+                    analyte_id_col=analyte_id_col,
+                    data_type="raw data",
+                    parser=exp_parser
+                )
         if ExperimentWorkbook.PeakDataSheet.name in sheet_names:
             metab_map = exp_parser.get_parameter_map(ExperimentWorkbook.MetabMapSheet.name)
             analyte_id_col = metab_map.get(ExperimentWorkbook.MetabMapSheet.Key.metab_id)
@@ -425,7 +464,7 @@ class PounceNodeBuilder:
         run_biosample_ids: set = set()
         sheet_names = exp_parser.sheet_dfs.keys()
 
-        if ExperimentWorkbook.RawDataSheet.name in sheet_names:
+        if ExperimentWorkbook.RawDataSheet.name in sheet_names and exp_data.experiments[0].platform_type != "sc_rnaseq":
             gene_map = (exp_parser.get_parameter_map(ExperimentWorkbook.GeneMapSheet.name)
                         if ExperimentWorkbook.GeneMapSheet.name in sheet_names else {})
             analyte_id_col = gene_map.get(ExperimentWorkbook.GeneMapSheet.Key.gene_id)
@@ -473,6 +512,43 @@ class PounceNodeBuilder:
             biosample_ids = set(rb_to_bs.values())
 
         return len(analyte_ids), len(biosample_ids)
+
+    def _parse_sc_raw_data_files(self, experiment_obj: Experiment, parser: ExcelsheetParser):
+        """Emit source file references for each single-cell run, without a matrix Dataset."""
+        sheet = parser.sheet_dfs[ExperimentWorkbook.RawDataSheet.name]
+        nodes = []
+        experiment_edges = []
+        run_edges = []
+        for _, row in sheet.iterrows():
+            run_id = str(row["runbiosample_id"]).strip()
+            run = self._ctx.run_biosample_by_original_id.get(run_id)
+            if run is None:
+                raise ValueError(f"{parser.file_path} / RawData: unknown runbiosample_id '{run_id}'")
+
+            def cell(name):
+                value = row.get(name)
+                return None if value is None or pd.isna(value) or not str(value).strip() else str(value).strip()
+
+            def count(name):
+                value = cell(name)
+                return int(float(value)) if value is not None else None
+
+            file_set = RawDataFiles(
+                id=f"{experiment_obj.id}:raw_data_files:{self._hash_suffix(run_id, length=12)}",
+                run_biosample_id=run_id,
+                matrix_file=cell("matrix_file"), features_file=cell("features_file"),
+                barcodes_file=cell("barcodes_file"), seurat_file=cell("seurat_file"),
+                seurat_description=cell("seurat_description"), geo_sample=cell("GEO_sample"),
+                feature_count=count("feature_count"), barcode_count=count("barcode_count"),
+                nonzero_count=count("nonzero_count"), supplementary_urls=cell("supplementary_urls"),
+            )
+            nodes.append(file_set)
+            experiment_edges.append(ExperimentRawDataFilesEdge(start_node=experiment_obj, end_node=file_set))
+            run_edges.append(RunBiosampleRawDataFilesEdge(start_node=run, end_node=file_set))
+        if nodes:
+            yield nodes
+            yield experiment_edges
+            yield run_edges
 
     def _get_metabolite_categories(self, row, column_map: dict) -> List[CategoryValue]:
         categories = []
@@ -682,6 +758,13 @@ class PounceNodeBuilder:
         """Parse a data matrix sheet (RawData, PeakData, or StatsReadyData) into a Dataset node."""
         pre_processing = parser.safe_get_string(meta_sheet, "pre_processing_description")
         peri_processing = parser.safe_get_string(meta_sheet, "peri_processing_description")
+        geo_metadata = {}
+        if meta_sheet == ExperimentWorkbook.RawDataMetaSheet.name:
+            geo_metadata = {
+                "reported_data_processing": parser.safe_get_string(meta_sheet, "reported_data_processing"),
+                "data_representation": parser.safe_get_string(meta_sheet, "data_representation"),
+                "source_feature_type_note": parser.safe_get_string(meta_sheet, "source_feature_type_note"),
+            }
         dataset_id_suffix = data_type.replace(" ", "_")
         dataset_id = f"{experiment_obj.id}:{dataset_id_suffix}"
 
@@ -692,7 +775,8 @@ class PounceNodeBuilder:
                 id=dataset_id, data_type=data_type,
                 access=experiment_obj.access,
                 pre_processing_description=pre_processing, peri_processing_description=peri_processing,
-                row_count=0, column_count=0, gene_id_column=analyte_id_col, sample_columns=[]
+                row_count=0, column_count=0, gene_id_column=analyte_id_col, sample_columns=[],
+                **geo_metadata,
             )
             yield [dataset, ExperimentDatasetEdge(start_node=experiment_obj, end_node=dataset)]
             return
@@ -704,7 +788,8 @@ class PounceNodeBuilder:
             access=experiment_obj.access,
             pre_processing_description=pre_processing, peri_processing_description=peri_processing,
             row_count=len(raw_df), column_count=len(raw_df.columns),
-            gene_id_column=analyte_id_col, sample_columns=list(raw_df.columns)
+            gene_id_column=analyte_id_col, sample_columns=list(raw_df.columns),
+            **geo_metadata,
         )
         run_biosample_edges = [
             DatasetRunBiosampleEdge(start_node=placeholder, end_node=self._ctx.run_biosample_by_original_id[str(col)])
@@ -720,7 +805,7 @@ class PounceNodeBuilder:
             pre_processing_description=pre_processing, peri_processing_description=peri_processing,
             row_count=len(qualified_df), column_count=len(qualified_df.columns),
             gene_id_column=analyte_id_col, sample_columns=list(qualified_df.columns),
-            _data_frame=qualified_df
+            _data_frame=qualified_df, **geo_metadata,
         )
         for edge in run_biosample_edges + analyte_edges:
             edge.start_node = dataset

@@ -55,3 +55,37 @@ def test_invalid_output_configuration_fails_before_build(adapters):
 
     with pytest.raises(ValueError, match="src/use_cases/working.yaml must configure exactly one ArangoOutputAdapter"):
         build_cli.prepare_primary_builder(builder, resume=False, yes=True)
+
+
+@pytest.mark.parametrize("refresh_post_on_resume", [True, False])
+def test_resume_can_refresh_post_build_without_resetting_its_run(
+    monkeypatch, refresh_post_on_resume,
+):
+    calls = []
+
+    class Builder:
+        def __init__(self, yaml_file):
+            self.yaml_file = yaml_file
+
+        def do_etl(self, **kwargs):
+            calls.append((self.yaml_file, kwargs))
+
+    monkeypatch.setattr("src.use_cases.build_from_yaml.BuildGraphFromYaml", Builder)
+    monkeypatch.setattr(build_cli, "parse_common_build_args", lambda build_name: SimpleNamespace(resume=True, yes=False))
+    monkeypatch.setattr(build_cli, "prepare_primary_builder", lambda builder, **kwargs: True)
+
+    build_cli.run_arango_build_cli(
+        build_name="pounce",
+        primary_yaml="primary.yaml",
+        post_yaml="post.yaml",
+        refresh_post_on_resume=refresh_post_on_resume,
+    )
+
+    assert calls == [
+        ("primary.yaml", {"clean_edges": False, "resume": True}),
+        ("post.yaml", {
+            "resume": True,
+            "rerun_completed": refresh_post_on_resume,
+            "run_id": "post.yaml:refresh" if refresh_post_on_resume else None,
+        }),
+    ]

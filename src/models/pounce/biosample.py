@@ -16,6 +16,7 @@ class Biosample(Node):
     type: str = None
     tracking: Optional[str] = None
     demographics: Optional[Demographics] = None
+    geo_characteristics: Optional[str] = None
 
 
 @dataclass

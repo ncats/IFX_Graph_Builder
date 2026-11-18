@@ -3,6 +3,8 @@ import pytest
 from src.constants import DataSourceName
 from src.core.etl import ETL
 from src.input_adapters.manual.tdl_override import TDLOverrideAdapter
+from src.input_adapters.pounce_sheets.pounce_input_adapter import PounceInputAdapter
+from src.input_adapters.pounce_arango.analyte_summary_adapter import AnalyteSummaryAdapter
 from src.interfaces.input_adapter import InputAdapter
 from src.interfaces.output_adapter import OutputAdapter
 from src.models.datasource_version_info import DatasourceVersionInfo
@@ -177,6 +179,64 @@ def test_etl_resume_accepts_legacy_input_checkpoint_and_skips_completed_post_ada
     etl.do_etl(do_post_processing=False, resume=True, run_id="resume-test")
 
     assert events == []
+
+
+def test_pounce_geo_checkpoint_ids_run_new_entries_on_resume():
+    events = []
+    legacy = PounceInputAdapter(project_file="existing.xlsx")
+    geo_318016 = PounceInputAdapter(project_file="gse318016.xlsx", checkpoint_id="geo:GSE318016")
+    geo_335200 = PounceInputAdapter(project_file="gse335200.xlsx", checkpoint_id="geo:GSE335200")
+
+    def get_all(label):
+        def batches():
+            events.append(label)
+            yield []
+        return batches
+
+    for adapter, label in [(legacy, "legacy"), (geo_318016, "318016"), (geo_335200, "335200")]:
+        adapter.get_all = get_all(label)
+
+    assert legacy.get_name() == "PounceInputAdapter (NCATSPounce)"
+    assert len({legacy.get_name(), geo_318016.get_name(), geo_335200.get_name()}) == 3
+
+    class CheckpointOutput(_RecordingOutputAdapter):
+        def get_completed_adapter_names(self, run_id):
+            return {f"input:{legacy.get_name()}"}
+
+    ETL(
+        input_adapters=[legacy, geo_318016, geo_335200],
+        output_adapters=[CheckpointOutput()],
+    ).do_etl(do_post_processing=False, resume=True, run_id="pounce-resume-test")
+
+    assert events == ["318016", "335200"]
+
+
+def test_pounce_analyte_summary_replaces_existing_counts():
+    assert AnalyteSummaryAdapter.field_conflict_behavior == FieldConflictBehavior.KeepLast
+
+
+def test_etl_can_rerun_completed_adapter_without_resetting_run_state():
+    events = []
+
+    class CompletedAdapter(_OneProteinAdapter):
+        def get_all(self):
+            events.append("ran")
+            yield []
+
+    adapter = CompletedAdapter()
+
+    class CheckpointOutput(_RecordingOutputAdapter):
+        def get_completed_adapter_names(self, run_id):
+            return {f"input:{adapter.get_name()}"}
+
+        def reset_run_state(self, run_id):
+            raise AssertionError("resume must not clear the prior run's diagnostics")
+
+    ETL(
+        input_adapters=[adapter], output_adapters=[CheckpointOutput()],
+    ).do_etl(do_post_processing=False, resume=True, rerun_completed=True, run_id="post-test")
+
+    assert events == ["ran"]
 
 
 def test_etl_resume_skips_completed_post_adapter():

@@ -24,7 +24,7 @@ class ETL:
                 raise Exception("operation cancelled")
 
     def do_etl(self, do_post_processing = True, clean_edges: bool = True, resume: bool = False,
-               run_id: str | None = None):
+               run_id: str | None = None, rerun_completed: bool = False):
         if resume and self.curation_snapshots:
             raise RuntimeError(
                 "Resume is not safe when curations are configured because a changed or removed "
@@ -85,7 +85,7 @@ class ETL:
                         completed = checkpoint_name in completed_adapters or (
                             phase == "input" and display_name in completed_adapters
                         )
-                        if resume and allow_resume_skip and completed:
+                        if resume and allow_resume_skip and completed and not rerun_completed:
                             print(
                                 f"Skipping completed {phase} adapter "
                                 f"[{adapter_position}/{adapter_total}]: {display_name}"

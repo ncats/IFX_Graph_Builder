@@ -103,8 +103,10 @@ class BuildGraphFromYaml:
     def prepare_datastore(self, truncate_tables: bool = True):
         self.etl.create_or_truncate_datastores(truncate_tables=truncate_tables)
 
-    def do_etl(self, do_post_processing = True, clean_edges: bool = True, resume: bool = False):
-        self.etl.do_etl(do_post_processing, clean_edges, resume=resume, run_id=self.yaml_file)
+    def do_etl(self, do_post_processing = True, clean_edges: bool = True, resume: bool = False,
+               rerun_completed: bool = False, run_id: str | None = None):
+        self.etl.do_etl(do_post_processing, clean_edges, resume=resume,
+                        run_id=run_id or self.yaml_file, rerun_completed=rerun_completed)
 
 
 def _registry_datasets_from_config(config_node) -> list[dict]:

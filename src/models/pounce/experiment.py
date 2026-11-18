@@ -49,6 +49,8 @@ class Experiment(Node):
     experiment_data_file: Optional[str] = None
     attached_files: List[str] = field(default_factory=list)
     calculated_properties: Optional[Dict[str, float]] = None
+    geo_submission_date: Optional[str] = None
+    curation_notes: Optional[str] = None
 
 
 @dataclass
@@ -70,6 +72,14 @@ class RunBiosample(Node):
     technical_replicate_number: Optional[int] = None
     run_order: Optional[int] = None
     batch: Optional[str] = None
+    source_file_name: Optional[str] = None
+    replicate_label: Optional[str] = None
+    geo_sample_accession: Optional[str] = None
+    geo_sample_url: Optional[str] = None
+    geo_sra_url: Optional[str] = None
+    sample_description: Optional[str] = None
+    source_name: Optional[str] = None
+    library_text: Optional[str] = None
 
 
 @dataclass

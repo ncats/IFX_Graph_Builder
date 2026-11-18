@@ -25,6 +25,9 @@ class Dataset(Node):
     column_count: Optional[int] = None
     gene_id_column: Optional[str] = None
     sample_columns: List[str] = field(default_factory=list)
+    reported_data_processing: Optional[str] = None
+    data_representation: Optional[str] = None
+    source_feature_type_note: Optional[str] = None
     _data_frame: Optional["pd.DataFrame"] = field(default=None, repr=False)
 
 

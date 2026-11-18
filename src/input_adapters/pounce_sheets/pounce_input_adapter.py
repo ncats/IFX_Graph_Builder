@@ -13,11 +13,13 @@ from src.models.node import Node, Relationship
 
 class PounceInputAdapter(InputAdapter):
     def __init__(self, project_file: str, experiment_files: List[str] = None,
-                 stats_results_files: List[str | None] = None, validators_config: str = None):
+                 stats_results_files: List[str | None] = None, validators_config: str = None,
+                 checkpoint_id: str | None = None):
         self.project_file = project_file
         self.experiment_files = experiment_files or []
         self.stats_results_files = stats_results_files or []
         self.validators_config = validators_config
+        self.checkpoint_id = checkpoint_id
         self._pounce_parser = PounceParser()
         self._cached_validation_result = None
 
@@ -25,6 +27,10 @@ class PounceInputAdapter(InputAdapter):
 
     def get_datasource_name(self) -> DataSourceName:
         return DataSourceName.NCATSPounce
+
+    def get_name(self) -> str:
+        name = super().get_name()
+        return f"{name} [{self.checkpoint_id}]" if self.checkpoint_id else name
 
     def get_version(self) -> DatasourceVersionInfo:
         data = self.get_validation_data()

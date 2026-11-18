@@ -678,10 +678,39 @@ class TestParseExperiment:
         _, issues = PounceParser().parse_experiment(parser)
         assert not any(issue.field == "gene_id" and issue.severity == "error" for issue in issues)
 
-    def test_sc_rnaseq_without_gene_id_rejects_populated_raw_data(self):
+    def test_sc_rnaseq_raw_data_uses_manifest_columns_not_gene_ids(self):
         parser = self._gene_parser("sc_rnaseq", {}, raw_rows=[{"Symbol": "TP53", "S1": 2}])
         _, issues = PounceParser().parse_experiment(parser)
-        assert any(issue.sheet == "GeneMap" and "sc_rnaseq may omit" in issue.message for issue in issues)
+        assert any(issue.sheet == "RawData" and issue.field == "runbiosample_id" for issue in issues)
+        assert not any(issue.sheet == "GeneMap" and issue.field == "gene_id" for issue in issues)
+
+    def test_sc_manifest_accepts_trio_or_seurat_and_checks_run_ids(self):
+        parser = self._gene_parser("sc_rnaseq", {}, raw_rows=[
+            {"runbiosample_id": "R1", "matrix_file": "https://example.org/m.mtx.gz",
+             "features_file": "/uploads/features.tsv.gz", "barcodes_file": "/uploads/barcodes.tsv.gz"},
+            {"runbiosample_id": "R2", "seurat_file": "https://example.org/object.rds"},
+        ])
+        issues = PounceParser._check_sc_raw_data_manifest(parser, {"R1", "R2"})
+        assert issues == []
+
+        parser.sheet_dfs["RawData"].loc[1, "runbiosample_id"] = "R3"
+        parser.sheet_dfs["RawData"].loc[0, "features_file"] = None
+        issues = PounceParser._check_sc_raw_data_manifest(parser, {"R1", "R2"})
+        assert any("not in RunBioSampleMeta" in issue.message for issue in issues)
+        assert any("provide all of matrix_file" in issue.message for issue in issues)
+        assert any("missing a file-reference row" in issue.message for issue in issues)
+
+    def test_sc_stats_require_populated_gene_meta_even_with_gene_mapping(self):
+        from src.input_adapters.pounce_sheets.parsed_pounce_data import ParsedPounceData
+        from src.input_adapters.pounce_sheets.parsed_classes import ParsedExperiment
+        experiment = ParsedPounceData(
+            experiments=[ParsedExperiment(platform_type="sc_rnaseq")],
+            param_maps={"GeneMap": {"gene_id": "GeneID"}},
+        )
+        stats = make_mock_parser(sheet_dfs={"EffectSize": pd.DataFrame([{"GeneID": "ENSG1"}])})
+        issue = PounceParser._sc_gene_stats_issue(experiment, stats)
+        assert issue is not None
+        assert "populated GeneMeta" in issue.message
 
     def test_bulk_rnaseq_still_requires_gene_id_mapping(self):
         parser = self._gene_parser("bulk_rnaseq", {})
@@ -999,7 +1028,7 @@ class TestParseAll:
         assert any(
             issue.source_file == "stats.xlsx"
             and issue.sheet == "EffectSize_Map"
-            and "without gene_id" in issue.message
+            and "populated GeneMeta" in issue.message
             for issue in issues
         )
 

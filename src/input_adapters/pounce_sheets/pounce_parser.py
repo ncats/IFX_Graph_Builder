@@ -92,6 +92,13 @@ _KNOWN_KEYS_BY_SHEET[StatsResultsWorkbook.EffectSizeMapSheet.name] = {
     StatsResultsWorkbook.EffectSizeMapSheet.Key.protein_id,
     "ES_result{}", "Pval_result{}", "AdjPval_result{}",
 }
+_KNOWN_KEYS_BY_SHEET["RawDataMeta"].update({
+    "matrix_file", "features_file", "barcodes_file", "seurat_file",
+    "seurat_description", "feature_count", "barcode_count", "nonzero_count",
+    "supplementary_urls",
+})
+_KNOWN_KEYS_BY_SHEET["GeneMeta"].add("runbiosample")
+_KNOWN_KEYS_BY_SHEET["RunBioSampleMeta"].add("file_path")
 
 # Placeholder key used in EffectSize_Map rows that don't yet have an NCATSDPI name.
 # Treated as NA: silently skipped in unknown-key checks and column-existence checks.
@@ -307,8 +314,10 @@ class PounceParser:
             exposure_indices = self._detect_exposure_indices(biosample_map)
 
             for _, row in sheet_df.iterrows():
-                data.biosamples.append(
-                    self._parse_mapped_row(row, biosample_map, ParsedBiosample))
+                biosample = self._parse_mapped_row(row, biosample_map, ParsedBiosample)
+                if not biosample_map.get("GEO_description"):
+                    biosample.geo_characteristics = self._get_row_value(row, "GEO_Characteristics")
+                data.biosamples.append(biosample)
                 data.biospecimens.append(
                     self._parse_mapped_row(row, biosample_map, ParsedBiospecimen))
                 data.demographics.append(
@@ -342,6 +351,7 @@ class PounceParser:
         # --- ExperimentMeta (meta sheet) ---
         issues.extend(self._check_unknown_keys(parser, "ExperimentMeta", "ExperimentMeta"))
         data.experiments.append(self.parse_meta_sheet(parser, ParsedExperiment))
+        is_single_cell = (data.experiments[0].platform_type or "").strip().lower() == "sc_rnaseq"
         if getattr(parser, "pounce_version", None) == 2 and not data.experiments[0].experiment_type:
             issues.append(ValidationError(
                 severity="error", entity="experiments", field="experiment_type",
@@ -357,8 +367,21 @@ class PounceParser:
         if "RunBioSampleMap" in parser.sheet_dfs and "RunBioSampleMeta" in parser.sheet_dfs:
             issues.extend(self._check_mapped_columns(parser, "RunBioSampleMap", "RunBioSampleMeta", run_sample_map))
             for _, row in parser.sheet_dfs["RunBioSampleMeta"].iterrows():
-                data.run_biosamples.append(
-                    self._parse_mapped_row(row, run_sample_map, ParsedRunBiosample))
+                run_sample = self._parse_mapped_row(row, run_sample_map, ParsedRunBiosample)
+                geo_direct_columns = {
+                    "runbiosample_file": "file_name",
+                    "geo_sample_accession": "GEO_sample",
+                    "geo_sample_url": "BioSample_URL",
+                    "geo_sra_url": "SRA_URL",
+                    "sample_description": "Description",
+                    "replicate_label": "Treatment_Replicate_ID",
+                    "source_name": "Source_Name",
+                    "library_text": "Library",
+                }
+                for key, column in geo_direct_columns.items():
+                    if not run_sample_map.get(key):
+                        setattr(run_sample, key, self._get_row_value(row, column))
+                data.run_biosamples.append(run_sample)
 
         # Cross-reference: every biosample_id in RunBioSampleMeta must exist in BioSampleMeta.
         if valid_biosample_ids is not None and "RunBioSampleMap" in parser.sheet_dfs:
@@ -409,7 +432,7 @@ class PounceParser:
 
         # --- Data matrix ID cross-references (per-experiment, before merging) ---
         # Check that every gene/metabolite ID in the data matrix exists in the meta sheet.
-        if "GeneMap" in parser.sheet_dfs and data.genes:
+        if not is_single_cell and "GeneMap" in parser.sheet_dfs and data.genes:
             gene_id_col = gene_map.get(ExperimentWorkbook.GeneMapSheet.Key.gene_id)
             if gene_id_col and gene_id_col not in ("NA", "N/A", ""):
                 valid_gene_ids = {g.gene_id for g in data.genes if g.gene_id}
@@ -442,7 +465,7 @@ class PounceParser:
         # Check that data matrix sample column names match run_biosample_ids in RunBioSampleMeta.
         valid_run_ids = {rb.run_biosample_id for rb in data.run_biosamples if rb.run_biosample_id}
         if valid_run_ids:
-            if "GeneMap" in parser.sheet_dfs:
+            if not is_single_cell and "GeneMap" in parser.sheet_dfs:
                 gene_id_col = gene_map.get(ExperimentWorkbook.GeneMapSheet.Key.gene_id)
                 if gene_id_col and gene_id_col not in ("NA", "N/A", ""):
                     issues.extend(self._check_matrix_sample_columns(
@@ -469,6 +492,9 @@ class PounceParser:
                         valid_sample_ids=valid_run_ids,
                         message_template="column '{value}' in ProteinData does not match any run_biosample_id in RunBioSampleMeta",
                     ))
+
+        if is_single_cell:
+            issues.extend(self._check_sc_raw_data_manifest(parser, valid_run_ids))
 
         # --- PeakDataMeta (meta sheet) ---
         if "PeakDataMeta" in parser.sheet_dfs:
@@ -605,6 +631,67 @@ class PounceParser:
         return data, issues
 
     @staticmethod
+    def _check_sc_raw_data_manifest(parser: ExcelsheetParser, valid_run_ids: Set[str]) -> List[ValidationError]:
+        """Validate single-cell file references without treating them as a matrix."""
+        sheet = parser.sheet_dfs.get("RawData")
+        issues: List[ValidationError] = []
+
+        def error(field: str, message: str, row: Optional[int] = None):
+            issues.append(ValidationError(
+                severity="error", entity="raw_data_files", field=field,
+                sheet="RawData", column=field, row=row,
+                source_file=parser.file_path, message=message,
+            ))
+
+        if sheet is None or sheet.empty:
+            error("RawData", "Single-cell RawData needs one file-reference row per run_biosample_id")
+            return issues
+        if "runbiosample_id" not in sheet.columns:
+            error("runbiosample_id", "Single-cell RawData needs a runbiosample_id column")
+            return issues
+        if not {"matrix_file", "features_file", "barcodes_file", "seurat_file"} & set(sheet.columns):
+            error("matrix_file", "Single-cell RawData needs matrix/features/barcodes or seurat_file columns")
+            return issues
+
+        def value(row, field):
+            raw = row.get(field)
+            return None if raw is None or pd.isna(raw) or not str(raw).strip() else str(raw).strip()
+
+        seen: Set[str] = set()
+        for index, row in sheet.iterrows():
+            excel_row = int(index) + 2
+            run_id = value(row, "runbiosample_id")
+            if not run_id:
+                error("runbiosample_id", f"RawData row {excel_row}: runbiosample_id is required", excel_row)
+                continue
+            if run_id not in valid_run_ids:
+                error("runbiosample_id", f"RawData row {excel_row}: runbiosample_id '{run_id}' is not in RunBioSampleMeta", excel_row)
+            if run_id in seen:
+                error("runbiosample_id", f"RawData row {excel_row}: duplicate runbiosample_id '{run_id}'", excel_row)
+            seen.add(run_id)
+
+            trio = [value(row, name) for name in ("matrix_file", "features_file", "barcodes_file")]
+            seurat = value(row, "seurat_file")
+            if any(trio) and not all(trio):
+                error("matrix_file", f"RawData row {excel_row}: provide all of matrix_file, features_file, and barcodes_file", excel_row)
+            if not any(trio) and not seurat:
+                error("seurat_file", f"RawData row {excel_row}: provide a complete matrix/features/barcodes trio or seurat_file", excel_row)
+            for field in ("feature_count", "barcode_count", "nonzero_count"):
+                raw = value(row, field)
+                if raw is None:
+                    continue
+                try:
+                    count = float(raw)
+                    if not count.is_integer() or count < 0:
+                        raise ValueError(raw)
+                except ValueError:
+                    error(field, f"RawData row {excel_row}: {field} must be a non-negative integer", excel_row)
+
+        for run_id in sorted(valid_run_ids - seen):
+            error("runbiosample_id", f"RawData is missing a file-reference row for runbiosample_id '{run_id}'")
+        return issues
+
+    @staticmethod
     def _check_gene_id_requirements(
         parser: ExcelsheetParser, data: ParsedPounceData, gene_map: dict,
     ) -> List[ValidationError]:
@@ -613,7 +700,7 @@ class PounceParser:
         is_single_cell = platform == "sc_rnaseq"
         has_gene_rows = any(
             sheet in parser.sheet_dfs and not parser.sheet_dfs[sheet].empty
-            for sheet in ("GeneMeta", "RawData")
+            for sheet in (("GeneMeta",) if is_single_cell else ("GeneMeta", "RawData"))
         )
         gene_id_col = gene_map.get("gene_id")
         has_gene_id_map = gene_id_col not in (None, "", "NA", "N/A")
@@ -621,8 +708,7 @@ class PounceParser:
 
         if not has_gene_id_map and (has_gene_rows or ("GeneMap" in parser.sheet_dfs and not is_single_cell)):
             message = (
-                "sc_rnaseq may omit gene_id only when GeneMeta and RawData have no data rows; "
-                "map gene_id to an ID column or leave those sheets empty for a future Seurat file"
+                "sc_rnaseq with populated GeneMeta must map gene_id to its ID column"
                 if is_single_cell else "Map sheet GeneMap is missing configuration for: gene_id"
             )
             issues.append(ValidationError(
@@ -645,25 +731,25 @@ class PounceParser:
     def _sc_gene_stats_issue(
         exp_data: ParsedPounceData, stats_parser: ExcelsheetParser,
     ) -> Optional[ValidationError]:
-        """Reject gene-level stats when a single-cell experiment has no gene ID mapping."""
+        """Require mapped GeneMeta IDs for populated single-cell gene-level stats."""
         if not exp_data.experiments:
             return None
         platform = (exp_data.experiments[0].platform_type or "").strip().lower()
         if platform != "sc_rnaseq":
-            return None
-        if exp_data.param_maps.get("GeneMap", {}).get("gene_id") not in (None, "", "NA", "N/A"):
             return None
         if not any(
             sheet in stats_parser.sheet_dfs and not stats_parser.sheet_dfs[sheet].empty
             for sheet in ("StatsReadyData", "EffectSize")
         ):
             return None
+        has_mapping = exp_data.param_maps.get("GeneMap", {}).get("gene_id") not in (None, "", "NA", "N/A")
+        if has_mapping and any(g.gene_id for g in exp_data.genes):
+            return None
         return ValidationError(
             severity="error", entity="parse", field="gene_id",
             message=(
-                "sc_rnaseq without gene_id cannot include populated gene-level "
-                "StatsReadyData or EffectSize sheets; map gene_id in the paired "
-                "experiment or leave those sheets empty for a future Seurat file"
+                "sc_rnaseq gene-level StatsReadyData or EffectSize needs a mapped "
+                "gene_id and populated GeneMeta in the paired experiment"
             ),
             sheet="EffectSize_Map", column="gene_id", source_file=stats_parser.file_path,
         )

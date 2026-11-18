@@ -65,6 +65,10 @@ class Project(Node):
     project_type: List[ProjectType] = field(default_factory=list)
     rare_disease_focus: bool = None
     sample_preparation: str = None
+    source_record: str = None
+    geo_submission_date: str = None
+    geo_title: str = None
+    curation_notes: str = None
 
     @staticmethod
     def id_from_display_id(display_id: str) -> int:

@@ -62,6 +62,10 @@ class ParsedProject:
         key="RD_tag", sheet="ProjectMeta", parse="bool")
     biosample_preparation: Optional[str] = sheet_field(
         key="biosample_preparation", sheet="ProjectMeta")
+    source_record: Optional[str] = sheet_field(key="source_record", sheet="ProjectMeta")
+    geo_submission_date: Optional[str] = sheet_field(key="GEO_submission_date", sheet="ProjectMeta")
+    geo_title: Optional[str] = sheet_field(key="GEO_title", sheet="ProjectMeta")
+    curation_notes: Optional[str] = sheet_field(key="curation_notes", sheet="ProjectMeta")
 
 
 @dataclass
@@ -85,6 +89,8 @@ class ParsedBiosample:
         key="biosample_tracking", sheet="BioSampleMeta")
     biosample_batch: Optional[str] = sheet_field(
         key="biosample_batch", sheet="BioSampleMeta")
+    geo_characteristics: Optional[str] = sheet_field(
+        key="GEO_description", sheet="BioSampleMeta")
 
 
 @dataclass
@@ -211,6 +217,8 @@ class ParsedExperiment:
     attached_file_descriptions: Optional[List[str]] = sheet_field(
         key="attached_file_{}_description", sheet="ExperimentMeta", indexed=True,
         default_factory=list)
+    geo_submission_date: Optional[str] = sheet_field(key="GEO_submission_date", sheet="ExperimentMeta")
+    curation_notes: Optional[str] = sheet_field(key="curation_notes", sheet="ExperimentMeta")
 
 
 # ---------------------------------------------------------------------------
@@ -313,6 +321,9 @@ class ParsedRawDataMeta:
         key="reference_genome", sheet="RawDataMeta")
     gene_or_transcript: Optional[str] = sheet_field(
         key="Gene or Transcript", sheet="RawDataMeta")
+    reported_data_processing: Optional[str] = sheet_field(key="reported_data_processing", sheet="RawDataMeta")
+    data_representation: Optional[str] = sheet_field(key="data_representation", sheet="RawDataMeta")
+    source_feature_type_note: Optional[str] = sheet_field(key="source_feature_type_note", sheet="RawDataMeta")
 
 
 @dataclass
@@ -348,6 +359,13 @@ class ParsedRunBiosample:
         key="batch", sheet="RunBioSampleMeta")
     runbiosample_file: Optional[str] = sheet_field(
         key="runbiosample_file", sheet="RunBioSampleMeta")
+    replicate_label: Optional[str] = sheet_field(key="replicate_label", sheet="RunBioSampleMeta")
+    geo_sample_accession: Optional[str] = sheet_field(key="geo_sample_accession", sheet="RunBioSampleMeta")
+    geo_sample_url: Optional[str] = sheet_field(key="geo_sample_url", sheet="RunBioSampleMeta")
+    geo_sra_url: Optional[str] = sheet_field(key="geo_sra_url", sheet="RunBioSampleMeta")
+    sample_description: Optional[str] = sheet_field(key="sample_description", sheet="RunBioSampleMeta")
+    source_name: Optional[str] = sheet_field(key="source_name", sheet="RunBioSampleMeta")
+    library_text: Optional[str] = sheet_field(key="library_text", sheet="RunBioSampleMeta")
 
 
 # ---------------------------------------------------------------------------
