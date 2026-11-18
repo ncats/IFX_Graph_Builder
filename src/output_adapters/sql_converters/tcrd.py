@@ -477,10 +477,12 @@ class TCRDOutputConverter(SQLOutputConverter):
     def disease_entity_xref_converter(self, obj: dict) -> List[EntityXref]:
         if not obj['id'].startswith('IFXDisease:'):
             return []
-        exact = (obj.get('xref_match_types') or {}).get('exact')
-        if not exact or not set(exact).issubset(set(obj.get('xref') or [])):
-            raise ValueError(f"{obj['id']} has invalid exact disease xrefs")
-        return self._entity_xrefs(obj, 'disease', 'ncats_disease', exact)
+        match_types = obj.get('xref_match_types') or {}
+        xrefs = obj.get('xref') or []
+        typed_ids = {source_id for ids in match_types.values() for source_id in ids}
+        if not match_types.get('exact') or not typed_ids.issubset(set(xrefs)):
+            raise ValueError(f"{obj['id']} has invalid typed disease xrefs")
+        return self._entity_xrefs(obj, 'disease', 'ncats_disease', sorted(typed_ids))
 
     def pmscore_converter(self, obj: dict) -> List[Pmscore]:
         protein_id = self.resolve_id('protein', obj['id'])

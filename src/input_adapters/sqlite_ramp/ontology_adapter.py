@@ -7,9 +7,6 @@ from src.models.ontology import Ontology
 
 class OntologyAdapter(RaMPSqliteAdapter):
 
-    def __init__(self, sqlite_file):
-        RaMPSqliteAdapter.__init__(self, sqlite_file=sqlite_file)
-
     def get_all(self) -> Generator[List[Ontology], None, None]:
         results = self.get_session().query(
             SqliteOntology.rampOntologyId,

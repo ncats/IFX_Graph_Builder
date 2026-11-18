@@ -7,9 +7,6 @@ from src.models.pathway import Pathway
 
 class PathwayAdapter(RaMPSqliteAdapter):
 
-    def __init__(self, sqlite_file):
-        RaMPSqliteAdapter.__init__(self, sqlite_file=sqlite_file)
-
     def get_all(self) -> Generator[List[Pathway], None, None]:
         results = self.get_session().query(
             SqlitePathway.pathwayRampId,

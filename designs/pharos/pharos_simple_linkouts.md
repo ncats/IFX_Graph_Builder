@@ -106,7 +106,7 @@ These should be generated after protein nodes are available in the Pharos graph.
 
 ### Source Lists
 
-These should be downloaded or snapshotted, probably by Snakemake/prep, then read
+These should be captured as Registry snapshots, then read
 by a Pharos-only linkout adapter:
 
 - GlyGen human protein CSV.

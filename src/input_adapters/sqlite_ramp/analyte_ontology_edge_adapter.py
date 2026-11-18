@@ -8,9 +8,6 @@ from src.models.ontology import MetaboliteOntologyEdge, Ontology
 
 class MetaboliteOntologyEdgeAdapter(RaMPSqliteAdapter):
 
-    def __init__(self, sqlite_file):
-        RaMPSqliteAdapter.__init__(self, sqlite_file=sqlite_file)
-
     def get_all(self) -> Generator[List[MetaboliteOntologyEdge], None, None]:
         results = self.get_session().query(
             SqliteAnalyteHasOntology.rampCompoundId,

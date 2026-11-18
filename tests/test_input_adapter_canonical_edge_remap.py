@@ -8,6 +8,7 @@ from src.interfaces.input_adapter import InputAdapter
 from src.models.datasource_version_info import DatasourceVersionInfo
 from src.models.disease import Disease, GeneDiseaseEdge, ProteinDiseaseEdge
 from src.models.expression import ExpressionDetail, GeneTissueExpressionEdge, ProteinTissueExpressionEdge
+from src.models.ligand import Ligand, ProteinLigandEdge
 from src.models.gene import Gene, MeasuredGene, MeasuredGeneEdge
 from src.models.mouse_phenotype import GeneMousePhenotypeEdge, MousePhenotype, ProteinMousePhenotypeEdge
 from src.models.ortholog import GeneOrthologGeneEdge, OrthologGene, ProteinOrthologGeneEdge
@@ -56,6 +57,21 @@ def _resolver_map():
             canonical_class=Protein,
         )
     }
+
+
+def test_graph_ligand_ids_and_edge_endpoints_survive_without_a_ligand_resolver():
+    ligand_id = "CHEBI:2700"
+    edge = ProteinLigandEdge(
+        start_node=Protein(id="IFXProtein:ONE"),
+        end_node=Ligand(id=ligand_id),
+    )
+    batches = list(_SingleBatchAdapter([Ligand(id=ligand_id), edge])
+                   .get_resolved_and_provenanced_list({}))
+
+    ligand = next(item for batch in batches for item in batch if isinstance(item, Ligand))
+    association = next(item for batch in batches for item in batch if isinstance(item, ProteinLigandEdge))
+    assert ligand.id == ligand_id
+    assert association.end_node.id == ligand_id
 
 
 def test_input_adapter_remaps_gene_tissue_expression_edge_to_protein_edge():

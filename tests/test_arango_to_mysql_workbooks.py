@@ -1,4 +1,5 @@
 import io
+import json
 
 from sqlalchemy import MetaData, create_engine, select
 
@@ -74,3 +75,43 @@ def test_copy_document_collection_materializes_workbook_blob():
     assert row["project_id"] == "PROJ001"
     assert row["original_filename"] == "test.xlsx"
     assert row["content_blob"] == b"fake workbook bytes"
+
+
+def test_copy_document_collection_preserves_structured_dict_values_as_json():
+    converter = _make_converter()
+    schema = {
+        "fields": {
+            "id": "str",
+            "xref_match_types": {
+                "type": "dict",
+                "key_type": "str",
+                "value_type": {"type": "list", "item_type": "str"},
+            },
+            "calculated_properties": {
+                "type": "dict",
+                "key_type": "str",
+                "value_type": "float",
+            },
+        }
+    }
+    table, child_tables, object_tables, dict_tables = converter._create_document_table("Gene", schema["fields"])
+    engine = create_engine("sqlite:///:memory:")
+    converter.sa_metadata.create_all(engine)
+    converter._read_collection_paginated = lambda collection_name, batch_size: [[{
+        "id": "GENE:1",
+        "xref_match_types": {"exact": ["Ensembl:ENSG1", "NCBIGene:1"]},
+        "calculated_properties": {"score": 0.75},
+    }]]
+
+    converter._copy_document_collection(
+        engine, "Gene", table, child_tables, object_tables, dict_tables, schema, batch_size=1000,
+    )
+
+    with engine.connect() as conn:
+        match_row = conn.execute(select(dict_tables["xref_match_types"])).mappings().one()
+        property_row = conn.execute(select(dict_tables["calculated_properties"])).mappings().one()
+
+    assert match_row["parent_id"] == "GENE:1"
+    assert match_row["key"] == "exact"
+    assert json.loads(match_row["value"]) == ["Ensembl:ENSG1", "NCBIGene:1"]
+    assert property_row["value"] == 0.75

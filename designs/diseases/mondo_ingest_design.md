@@ -10,7 +10,7 @@ Ingest Mondo disease ontology terms and parent-child hierarchy into the target g
 - Download target path: `input_files/auto/mondo/mondo.json`
 
 ## Current Workflow Wiring
-- Snakemake download rule: `workflows/pharos.Snakefile` (`download_mondo`)
+- Historical download rule (removed): `workflows/pharos.Snakefile` (`download_mondo`)
 - Working ETL config: `src/use_cases/working.yaml`
   - `MondoDiseaseAdapter`
   - `MondoDiseaseParentEdgeAdapter`
@@ -88,7 +88,7 @@ Observed from current file:
 - version metadata may be sparse in JSON export.
 
 Recommended follow-up:
-- Add a Snakemake metadata sidecar TSV (`mondo_version.tsv`) for deterministic version/date capture at download time.
+- Preserve deterministic MONDO version and date metadata in its Registry snapshot.
 
 ## Validation Checklist
 For a current snapshot, expected order-of-magnitude checks:

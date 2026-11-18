@@ -11497,14 +11497,18 @@ async def document_detail(request: Request, db_name: str, coll_name: str, doc_ke
 
     if doc is None and db.has_collection(coll_name) and coll.properties().get("type") not in ("edge", 3):
         matches = _documents_matching_xref(db, coll_name, doc_key)
-        if len(matches) == 1:
+        single_exact = (
+            len(matches) == 1
+            and doc_key in (matches[0].get("xref_match_types") or {}).get("exact", [])
+        )
+        if len(matches) == 1 and (coll_name != "Disease" or single_exact):
             canonical_key = matches[0]["_key"]
             return _redirect_to(
                 f"/db/{url_quote(db_name, safe='')}/collection/{url_quote(coll_name, safe='')}/doc/"
                 f"{url_quote(canonical_key, safe='')}?{urlencode({'resolved_from': doc_key})}",
                 request=request,
             )
-        if len(matches) > 1:
+        if matches:
             choices = []
             for match in matches[:50]:
                 match_types = sorted(

@@ -1,5 +1,8 @@
 source_credentials: &source_credentials ./src/use_cases/secrets/ifxdev_arangodb.yaml
-ramp_sqlite_file: &ramp_sqlite_file ./input_files/auto/ramp/RaMP_SQLite_v3.0.12.sqlite
+ramp_release: &ramp_release ramp:sqlite_database:3.0.12-ramp4.0
+
+registry:
+  credentials: ./src/use_cases/secrets/aws_ifx_registry.yaml
 
 resolvers:
   - label: ramp_resolver
@@ -8,108 +11,108 @@ resolvers:
     kwargs:
       types:
         - Metabolite
-      sqlite_file: *ramp_sqlite_file
+      data_source: *ramp_release
 
 input_adapters:
   - import: ./src/input_adapters/sqlite_ramp/metabolite_adapter.py
     class: MetaboliteAdapter
     kwargs:
-      sqlite_file: *ramp_sqlite_file
+      data_source: *ramp_release
 
   - import: ./src/input_adapters/sqlite_ramp/metabolite_class_adapter.py
     class: MetaboliteClassAdapter
     kwargs:
-      sqlite_file: *ramp_sqlite_file
+      data_source: *ramp_release
 
   - import: ./src/input_adapters/sqlite_ramp/metabolite_class_edge_adapter.py
     class: MetaboliteClassEdgeAdapter
     kwargs:
-      sqlite_file: *ramp_sqlite_file
+      data_source: *ramp_release
 
   - import: ./src/input_adapters/sqlite_ramp/analyte_synonym_adapter.py
     class: MetaboliteSynonymAdapter
     kwargs:
-      sqlite_file: *ramp_sqlite_file
+      data_source: *ramp_release
 
   - import: ./src/input_adapters/sqlite_ramp/metabolite_chem_props_adapter.py
     class: MetaboliteChemPropsAdapter
     kwargs:
-      sqlite_file: *ramp_sqlite_file
+      data_source: *ramp_release
 
   - import: ./src/input_adapters/sqlite_ramp/protein_adapter.py
     class: ProteinAdapter
     kwargs:
-      sqlite_file: *ramp_sqlite_file
+      data_source: *ramp_release
 
   - import: ./src/input_adapters/sqlite_ramp/analyte_synonym_adapter.py
     class: ProteinSynonymAdapter
     kwargs:
-      sqlite_file: *ramp_sqlite_file
+      data_source: *ramp_release
 
   - import: ./src/input_adapters/sqlite_ramp/metabolite_protein_edge_adapter.py
     class: MetaboliteProteinEdgeAdapter
     kwargs:
-      sqlite_file: *ramp_sqlite_file
+      data_source: *ramp_release
 
   - import: ./src/input_adapters/sqlite_ramp/pathway_adapter.py
     class: PathwayAdapter
     kwargs:
-      sqlite_file: *ramp_sqlite_file
+      data_source: *ramp_release
 
   - import: ./src/input_adapters/sqlite_ramp/analyte_pathway_edge_adapter.py
     class: MetabolitePathwayEdgeAdapter
     kwargs:
-      sqlite_file: *ramp_sqlite_file
+      data_source: *ramp_release
 
   - import: ./src/input_adapters/sqlite_ramp/analyte_pathway_edge_adapter.py
     class: ProteinPathwayEdgeAdapter
     kwargs:
-      sqlite_file: *ramp_sqlite_file
+      data_source: *ramp_release
 
   - import: ./src/input_adapters/sqlite_ramp/ontology_adapter.py
     class: OntologyAdapter
     kwargs:
-      sqlite_file: *ramp_sqlite_file
+      data_source: *ramp_release
 
   - import: ./src/input_adapters/sqlite_ramp/analyte_ontology_edge_adapter.py
     class: MetaboliteOntologyEdgeAdapter
     kwargs:
-      sqlite_file: *ramp_sqlite_file
+      data_source: *ramp_release
 
   - import: ./src/input_adapters/sqlite_ramp/reaction_adapter.py
     class: ReactionAdapter
     kwargs:
-      sqlite_file: *ramp_sqlite_file
+      data_source: *ramp_release
 
   - import: ./src/input_adapters/sqlite_ramp/reaction_class_adapter.py
     class: ReactionClassAdapter
     kwargs:
-      sqlite_file: *ramp_sqlite_file
+      data_source: *ramp_release
 
   - import: ./src/input_adapters/sqlite_ramp/reaction_class_edge_adapter.py
     class: ReactionClassEdgeAdapter
     kwargs:
-      sqlite_file: *ramp_sqlite_file
+      data_source: *ramp_release
 
   - import: ./src/input_adapters/sqlite_ramp/reaction_reaction_class_edge_adapter.py
     class: ReactionReactionClassEdgeAdapter
     kwargs:
-      sqlite_file: *ramp_sqlite_file
+      data_source: *ramp_release
 
   - import: ./src/input_adapters/sqlite_ramp/metabolite_reaction_edge_adapter.py
     class: MetaboliteReactionEdgeAdapter
     kwargs:
-      sqlite_file: *ramp_sqlite_file
+      data_source: *ramp_release
 
   - import: ./src/input_adapters/sqlite_ramp/protein_reaction_edge_adapter.py
     class: ProteinReactionEdgeAdapter
     kwargs:
-      sqlite_file: *ramp_sqlite_file
+      data_source: *ramp_release
 
   - import: ./src/input_adapters/sqlite_ramp/version_metadata_adapter.py
     class: VersionMetaAdapter
     kwargs:
-      sqlite_file: *ramp_sqlite_file
+      data_source: *ramp_release
 
 output_adapters:
   - import: ./src/output_adapters/arango_output_adapter.py

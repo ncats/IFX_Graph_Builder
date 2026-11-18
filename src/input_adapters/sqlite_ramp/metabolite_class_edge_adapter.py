@@ -7,9 +7,6 @@ from src.input_adapters.sqlite_ramp.tables import MetaboliteClass as SqliteMetab
 
 class MetaboliteClassEdgeAdapter(RaMPSqliteAdapter):
 
-    def __init__(self, sqlite_file):
-        RaMPSqliteAdapter.__init__(self, sqlite_file=sqlite_file)
-
     def get_all(self) -> Generator[List[MetaboliteClassEdge], None, None]:
         results = self.get_session().query(
             SqliteMetaboliteClass.ramp_id,

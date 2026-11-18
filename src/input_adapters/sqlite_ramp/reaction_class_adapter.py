@@ -7,9 +7,6 @@ from src.models.reaction import ReactionClass
 
 class ReactionClassAdapter(RaMPSqliteAdapter):
 
-    def __init__(self, sqlite_file):
-        RaMPSqliteAdapter.__init__(self, sqlite_file=sqlite_file)
-
     def get_all(self) -> Generator[List[ReactionClass], None, None]:
         results = self.get_session().query(
             SqliteReactionClass.rxn_class_ec,

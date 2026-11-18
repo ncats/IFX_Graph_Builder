@@ -8,7 +8,7 @@ Provide a repeatable workflow for adding a new data source to the target graph i
 - Read this playbook before starting any brand-new ingest source.
 - Do discovery before code changes.
 - Pause after discovery and propose a short implementation plan for user confirmation.
-- Let the user run Snakemake and ETL executions unless they explicitly delegate those runs.
+- Let the user run source acquisition and ETL executions unless they explicitly delegate those runs.
 - Start in `src/use_cases/working.yaml`; only promote to `src/use_cases/pharos/target_graph.yaml` after validation.
 - Keep source-specific decisions in a design doc under `designs/`.
 - End with explicit validation instructions the user can run.
@@ -23,12 +23,12 @@ Provide a repeatable workflow for adding a new data source to the target graph i
 
 ## Checklist
 
-1) **Identify and download the source data**
-   - Add download rules to the relevant Snakefile (e.g., `workflows/pharos.Snakefile`).
-   - If at all possible, get a discrete version and version date for the download.
-   - Store files under `input_files/auto/<source>/`.
-   - The user should run the Snakemake workflow and report back when the files are available.
-   - Record exact URLs in a design doc.
+1) **Identify and acquire the source data**
+   - Prefer an exact, versioned IFX Registry snapshot and pin its `data_source` in the working configuration.
+   - If at all possible, get a discrete version and version date for the source.
+   - For a source not yet in the Registry, document its acquisition and registration path before implementation.
+   - The user should acquire or register required source files and report back when they are available, unless they explicitly delegate that step.
+   - Record exact source URLs and snapshot IDs in a design doc.
 
 2) **Capture version metadata**
    - Prefer an official version endpoint if available.
@@ -194,7 +194,7 @@ Provide a repeatable workflow for adding a new data source to the target graph i
 ### Versioning
 - **Use the `Last-Modified` HTTP header when no official version endpoint exists.** JensenLab
   regenerates files on a weekly Sunday schedule — the `Last-Modified` header captures that publish
-  date reliably. Write it to a small TSV in Snakemake so the adapter can read it as `version_date`.
+  date reliably. Record it in source snapshot metadata so the adapter can use it as `version_date`.
 - **Use named parameters for `DatasourceVersionInfo`.** This avoids argument-order regressions when version handling evolves.
 
 ### Edge merging and downstream parity

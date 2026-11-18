@@ -17,7 +17,7 @@ from src.output_adapters.mysql_output_adapter import TCRDOutputAdapter
 
 COLUMNS = [
     "ncats_disease_id", "primary_xref", "MONDO_xref", "GARD_xref",
-    "DOID_xref", "MEDGEN_xref", "non_exact_xrefs", "standard_id", "nn_curie",
+    "DOID_xref", "MEDGEN_xref", "MESH_xref", "non_exact_xrefs", "standard_id", "nn_curie",
     "harmonized_name", "is_rare", "rare_basis", "review_note",
 ]
 
@@ -25,26 +25,48 @@ COLUMNS = [
 class _Release:
     snapshot_id = "ifx_harmonizers:diseases:2.3.0"
 
-    def __init__(self, path):
+    def __init__(self, path, edges_path, labels_path):
         self.path = path
-        checksum = hashlib.sha256(path.read_bytes()).hexdigest()
-        self.manifest = {"files": [{"path": "disease_ids.tsv", "sha256": checksum}]}
+        self.edges_path = edges_path
+        self.labels_path = labels_path
+        self.manifest = {"files": [
+            {"path": "disease_ids.tsv", "sha256": hashlib.sha256(path.read_bytes()).hexdigest()},
+            {"path": "app_graph/disease_xref_edges.tsv", "sha256": hashlib.sha256(edges_path.read_bytes()).hexdigest()},
+            {"path": "app_graph/xref_labels.tsv", "sha256": hashlib.sha256(labels_path.read_bytes()).hexdigest()},
+        ]}
 
     def file(self, name):
-        assert name == "disease_ids.tsv"
-        return self.path
+        return {
+            "disease_ids.tsv": self.path,
+            "app_graph/disease_xref_edges.tsv": self.edges_path,
+            "app_graph/xref_labels.tsv": self.labels_path,
+        }[name]
 
     def version_info(self):
         return DatasourceVersionInfo(version="2.3.0", version_date=None, download_date=None)
 
 
-def _release(tmp_path, rows):
+def _release(tmp_path, rows, edges=(), labels=None):
     path = tmp_path / "disease_ids.tsv"
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=COLUMNS, delimiter="\t")
         writer.writeheader()
         writer.writerows(rows)
-    return _Release(path)
+    edges_path = tmp_path / "disease_xref_edges.tsv"
+    with edges_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(
+            handle, fieldnames=["ncats_disease_id", "xref_id", "match_type", "xref_is_obsolete"], delimiter="\t"
+        )
+        writer.writeheader()
+        writer.writerows({**edge, "xref_is_obsolete": edge.get("xref_is_obsolete", "false")} for edge in edges)
+    labels_path = tmp_path / "xref_labels.tsv"
+    with labels_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["xref_id", "is_obsolete"], delimiter="\t")
+        writer.writeheader()
+        writer.writerows(labels if labels is not None else [
+            {"xref_id": "MONDO:0000001", "is_obsolete": "false"}
+        ])
+    return _Release(path, edges_path, labels_path)
 
 
 def _row(**changes):
@@ -55,6 +77,7 @@ def _row(**changes):
         "GARD_xref": "GARD:0000001",
         "DOID_xref": "DOID:1",
         "MEDGEN_xref": "MEDGEN:123",
+        "MESH_xref": "",
         "non_exact_xrefs": "MESH:D1=related",
         "standard_id": "MONDO:9999999",
         "nn_curie": "MONDO:8888888",
@@ -108,6 +131,116 @@ def test_duplicate_exact_alias_and_corrupt_snapshot_fail(tmp_path):
     release.manifest["files"][0]["sha256"] = "0" * 64
     with pytest.raises(ValueError, match="checksum mismatch"):
         DiseaseConsumerPayloadAdapter(release)
+
+
+def test_resolver_indexes_exact_edges_and_keeps_ambiguity_explicit(tmp_path):
+    release = _release(tmp_path, [
+        _row(MESH_xref="MESH:D031901"),
+        _row(ncats_disease_id="IFXDisease:TWO", primary_xref="MONDO:0000002",
+             MONDO_xref="MONDO:0000002", GARD_xref="", DOID_xref="", MEDGEN_xref="",
+             MESH_xref=""),
+    ], edges=[
+        {"ncats_disease_id": "IFXDisease:ONE", "xref_id": "MESH:D031901", "match_type": "broad"},
+        {"ncats_disease_id": "IFXDisease:ONE", "xref_id": "MESH:D2", "match_type": "exact"},
+        {"ncats_disease_id": "IFXDisease:ONE", "xref_id": "NCIT:C3396", "match_type": "exact"},
+        {"ncats_disease_id": "IFXDisease:ONE", "xref_id": "NCIt:C3396", "match_type": "broad"},
+        {"ncats_disease_id": "IFXDisease:ONE", "xref_id": "ICD11:2B50", "match_type": "related"},
+        {"ncats_disease_id": "IFXDisease:TWO", "xref_id": "MESH:D2", "match_type": "exact"},
+    ])
+    resolver = DiseaseConsumerResolver(
+        release, cache_path=str(tmp_path / "disease.sqlite"), types=["Disease"],
+        no_match_behavior="Allow", multi_match_behavior="Error",
+    )
+    matches = resolver.resolve_internal([Disease(id="MESH:D2"), Disease(id="MESH:D031901")])
+    assert [match.match for match in matches["MESH:D2"]] == [
+        "IFXDisease:ONE", "IFXDisease:TWO"
+    ]
+    assert [match.match for match in matches["MESH:D031901"]] == ["IFXDisease:ONE"]
+    ambiguous = resolver.resolve_nodes([Disease(id="MESH:D2")])
+    with pytest.raises(ValueError, match="resolves to multiple targets"):
+        resolver.parse_flat_node_list_from_map(ambiguous)
+    resolved = resolver.resolve_nodes([Disease(id="IFXDisease:ONE"), Disease(id="IFXDisease:TWO")])
+    one = resolved[IdResolver.MatchKeys.matched]["IFXDisease:ONE"]
+    two = resolved[IdResolver.MatchKeys.matched]["IFXDisease:TWO"]
+    assert "MESH:D031901" in one.xref_match_types["broad"]
+    assert "MESH:D031901" not in one.xref_match_types["exact"]
+    assert "MESH:D2" in one.xref_match_types["exact"]
+    assert "MESH:D2" in two.xref_match_types["exact"]
+    assert "NCIT:C3396" in one.xref_match_types["exact"]
+    assert "NCIt:C3396" in one.xref_match_types["broad"]
+    assert "ICD11:2B50" in one.xref_match_types["related"]
+    assert {xref.id_str() for xref in one.xref} >= {"NCIT:C3396", "NCIt:C3396"}
+    converter = TCRDOutputConverter()
+    converter.id_mapping["ncats_disease"] = {"IFXDisease:ONE": 1}
+    graph_node = ArangoOutputAdapter.clean_dict(
+        object.__new__(ArangoOutputAdapter), one, convert_dates=True
+    )
+    mysql_rows = converter.disease_entity_xref_converter(graph_node)
+    assert {(row.source_id, row.match_type) for row in mysql_rows} >= {
+        ("NCIT:C3396", "exact"), ("NCIt:C3396", "broad"),
+        ("ICD11:2B50", "related"),
+    }
+
+
+def test_obsolete_labels_exclude_aliases_and_edges_from_resolution_and_xrefs(tmp_path):
+    release = _release(tmp_path, [_row(MESH_xref="MESH:OLD")], edges=[
+        {"ncats_disease_id": "IFXDisease:ONE", "xref_id": "MESH:OLD", "match_type": "exact"},
+        {"ncats_disease_id": "IFXDisease:ONE", "xref_id": "MESH:NEW", "match_type": "exact"},
+        {"ncats_disease_id": "IFXDisease:ONE", "xref_id": "MESH:EDGE_OLD",
+         "match_type": "exact", "xref_is_obsolete": "true"},
+    ], labels=[
+        {"xref_id": "MESH:OLD", "is_obsolete": "true"},
+        {"xref_id": "MESH:NEW", "is_obsolete": "false"},
+    ])
+    resolver = DiseaseConsumerResolver(
+        release, cache_path=str(tmp_path / "disease.sqlite"), types=["Disease"],
+    )
+    assert resolver.resolve_internal([Disease(id="MESH:NEW")])["MESH:NEW"][0].match == "IFXDisease:ONE"
+    assert resolver.resolve_internal([Disease(id="MESH:EDGE_OLD")]) == {}
+    with pytest.raises(ValueError, match="obsolete identifier"):
+        resolver.resolve_internal([Disease(id="MESH:OLD")])
+    node = resolver.resolve_nodes([Disease(id="IFXDisease:ONE")])[IdResolver.MatchKeys.matched]["IFXDisease:ONE"]
+    all_xrefs = {xref.id_str() for xref in node.xref}
+    assert "MESH:NEW" in all_xrefs
+    assert "MESH:OLD" not in all_xrefs
+    assert "MESH:EDGE_OLD" not in all_xrefs
+
+
+def test_obsolete_primary_and_duplicate_labels_fail(tmp_path):
+    release = _release(tmp_path, [_row()], labels=[
+        {"xref_id": "MONDO:0000001", "is_obsolete": "true"}
+    ])
+    with pytest.raises(ValueError, match="obsolete primary_xref"):
+        DiseaseConsumerResolver(release, cache_path=str(tmp_path / "disease.sqlite"), types=["Disease"])
+
+    release = _release(tmp_path, [_row()], labels=[
+        {"xref_id": "MESH:D1", "is_obsolete": "true"},
+        {"xref_id": "MESH:D1", "is_obsolete": "false"},
+    ])
+    with pytest.raises(ValueError, match="duplicates MESH:D1"):
+        DiseaseConsumerResolver(release, cache_path=str(tmp_path / "disease.sqlite"), types=["Disease"])
+
+
+def test_label_checksum_change_rebuilds_resolver_cache(tmp_path):
+    release = _release(tmp_path, [_row(MESH_xref="MESH:OLD")], labels=[
+        {"xref_id": "MESH:OLD", "is_obsolete": "false"}
+    ])
+    cache_path = str(tmp_path / "disease.sqlite")
+    original = DiseaseConsumerResolver(release, cache_path=cache_path, types=["Disease"])
+    assert original.resolve_internal([Disease(id="MESH:OLD")])
+    original.connection.close()
+    original.connection = None
+
+    release.labels_path.write_text(
+        "xref_id\tis_obsolete\nMESH:OLD\ttrue\n", encoding="utf-8"
+    )
+    release.manifest["files"][2]["sha256"] = hashlib.sha256(
+        release.labels_path.read_bytes()
+    ).hexdigest()
+    updated = DiseaseConsumerResolver(release, cache_path=cache_path, types=["Disease"])
+    assert updated.connection.execute(
+        "SELECT COUNT(*) FROM matches WHERE match = 'MESH:OLD'"
+    ).fetchone()[0] == 0
 
 
 def test_payload_keeps_every_column_and_round_trips_through_disease_model(tmp_path):

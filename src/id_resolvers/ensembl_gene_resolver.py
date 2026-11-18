@@ -1,27 +1,32 @@
-"""Resolve human gene identifiers from a pinned Ensembl Registry snapshot."""
-
-from __future__ import annotations
+"""Resolve human gene identifiers from a pinned Ensembl FTP Registry snapshot."""
 
 import csv
+import gzip
+import re
 from collections.abc import Generator
 from typing import Any
 
 from src.constants import Prefix
 from src.id_resolvers.sqlite_cache_resolver import MatchingPair, SqliteCacheResolver
+from src.input_adapters.ensembl.gene import gene_features
 from src.models.node import EquivalentId
 
-ENSEMBL_GENE_FILE = "gene_transcript_identifiers.csv"
-RESOLVER_CONTRACT_VERSION = "1"
+
+ENTREZ_FILE = "ensembl_entrez.tsv.gz"
+RESOLVER_CONTRACT_VERSION = "2"
+_HGNC_ACCESSION = re.compile(r"\bAcc:HGNC:(\d+)\b")
 
 
 class EnsemblGeneResolver(SqliteCacheResolver):
-    """Human ENSG resolver backed only by an exact Registry data source."""
+    """Resolve source-asserted Ensembl, HGNC, NCBI Gene, and symbol IDs."""
 
     name = "Ensembl Gene Resolver"
 
     def __init__(self, data_source, **kwargs):
         self.data_source = data_source
-        self.data_file = data_source.file(ENSEMBL_GENE_FILE)
+        # Fail before opening a resolver cache if either required Registry file is absent.
+        self.data_source.file("ensembl_homo_sapiens.gff3.gz")
+        self.entrez_file = data_source.file(ENTREZ_FILE)
         super().__init__(**kwargs)
 
     def get_version_info(self) -> str:
@@ -32,71 +37,49 @@ class EnsemblGeneResolver(SqliteCacheResolver):
 
     def matching_ids(self) -> Generator[MatchingPair, Any, None]:
         emitted: set[MatchingPair] = set()
-        with self.data_file.open("r", encoding="utf-8", newline="") as handle:
-            for row in csv.DictReader(handle):
-                ensembl_id = _equivalent(row.get("Gene stable ID"), Prefix.ENSEMBL)
-                if ensembl_id is None:
+        gene_ids = set()
+        for gene_id, _, attributes in gene_features(self.data_source, canonical_only=False):
+            ensembl_id = _equivalent(gene_id, Prefix.ENSEMBL)
+            if ensembl_id is None:
+                continue
+            gene_ids.add(gene_id)
+            pairs = [MatchingPair(id=ensembl_id, match=ensembl_id, type="exact")]
+            for hgnc_number in _HGNC_ACCESSION.findall(attributes.get("description", "")):
+                pairs.append(MatchingPair(
+                    id=ensembl_id,
+                    match=_equivalent(hgnc_number, Prefix.HGNC),
+                    type=Prefix.HGNC.value,
+                ))
+            symbol = _equivalent(attributes.get("Name"), Prefix.Symbol)
+            if symbol is not None:
+                pairs.append(MatchingPair(id=ensembl_id, match=symbol, type=Prefix.Symbol.value))
+            for pair in pairs:
+                if pair not in emitted:
+                    emitted.add(pair)
+                    yield pair
+
+        with gzip.open(self.entrez_file, "rt", encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle, delimiter="\t")
+            required = {"gene_stable_id", "xref", "db_name"}
+            if not required.issubset(reader.fieldnames or []):
+                raise ValueError(f"Ensembl Entrez file lacks required columns: {self.entrez_file}")
+            for row in reader:
+                gene_id = (row["gene_stable_id"] or "").strip()
+                ncbi_id = (row["xref"] or "").strip()
+                if row["db_name"] != "EntrezGene" or gene_id not in gene_ids or not ncbi_id.isdecimal():
                     continue
-                pairs = [MatchingPair(id=ensembl_id, match=ensembl_id, type="exact")]
-
-                hgnc_id = _equivalent(row.get("HGNC ID"), Prefix.HGNC, strip_prefix="HGNC:")
-                if hgnc_id is not None:
-                    pairs.append(
-                        MatchingPair(
-                            id=ensembl_id,
-                            match=hgnc_id,
-                            type=Prefix.HGNC.value,
-                        )
-                    )
-
-                ncbi_id = _ncbi_gene(row.get("NCBI gene (formerly Entrezgene) ID"))
-                if ncbi_id is not None:
-                    pairs.append(
-                        MatchingPair(
-                            id=ensembl_id,
-                            match=ncbi_id,
-                            type=Prefix.NCBIGene.value,
-                        )
-                    )
-
-                # The existing Harmonizers export calls BioMart's
-                # external_gene_name field "Gene name".
-                symbol = _equivalent(row.get("Gene name"), Prefix.Symbol)
-                if symbol is not None:
-                    pairs.append(
-                        MatchingPair(
-                            id=ensembl_id,
-                            match=symbol,
-                            type=Prefix.Symbol.value,
-                        )
-                    )
-
-                for pair in pairs:
-                    if pair not in emitted:
-                        emitted.add(pair)
-                        yield pair
+                pair = MatchingPair(
+                    id=_equivalent(gene_id, Prefix.ENSEMBL),
+                    match=_equivalent(str(int(ncbi_id)), Prefix.NCBIGene),
+                    type=Prefix.NCBIGene.value,
+                )
+                if pair not in emitted:
+                    emitted.add(pair)
+                    yield pair
 
 
-def _equivalent(
-    raw_value: str | None,
-    prefix: Prefix,
-    *,
-    strip_prefix: str | None = None,
-) -> str | None:
+def _equivalent(raw_value: str | None, prefix: Prefix) -> str | None:
     value = (raw_value or "").strip()
-    if strip_prefix and value.startswith(strip_prefix):
-        value = value[len(strip_prefix) :]
     if not value:
         return None
     return EquivalentId(id=value, type=prefix).id_str()
-
-
-def _ncbi_gene(raw_value: str | None) -> str | None:
-    value = (raw_value or "").strip()
-    if not value:
-        return None
-    try:
-        normalized = str(int(value))
-    except ValueError:
-        return None
-    return EquivalentId(id=normalized, type=Prefix.NCBIGene).id_str()

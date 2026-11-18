@@ -13,8 +13,8 @@
 {% endblock %}
 
 {% block content %}
-<h1>More than one {{ coll_name }} matches {{ lookup_id }}</h1>
-<p>Choose a canonical document:</p>
+<h1>Matches for {{ lookup_id }} in {{ coll_name }}</h1>
+<p>Open a document to review its relationship to this identifier:</p>
 <div class="card">
     <ul>
         {% for choice in choices %}

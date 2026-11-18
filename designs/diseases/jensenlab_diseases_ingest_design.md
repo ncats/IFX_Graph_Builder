@@ -130,7 +130,7 @@ Observed text-mining score drift:
 ## Implemented Wiring
 
 - Add a new adapter under `src/input_adapters/jensenlab/`.
-- Add Snakemake download rules in `workflows/pharos.Snakefile`.
+- Pin an exact JensenLab source snapshot in the Registry.
 - Wire the adapter into `src/use_cases/working.yaml`.
 - Promote the validated adapter into:
   - `src/use_cases/pharos/pharos.yaml`

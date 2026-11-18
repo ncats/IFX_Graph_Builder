@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import List, Optional
 
 import pytest
+from requests.exceptions import ChunkedEncodingError
 
 from src.core.curations import (
     CHEBI_RECORD_PROPERTIES,
@@ -439,6 +440,35 @@ def test_store_writes_edge_handles_with_safe_document_keys():
     assert edge_doc["end_id"] == "PUBCHEM.COMPOUND:62698"
 
 
+def test_store_reads_existing_edges_in_bounded_batches():
+    class BoundedEdgeCollection(FakeCollection):
+        def __init__(self):
+            super().__init__()
+            self.get_many_sizes = []
+
+        def get_many(self, keys):
+            self.get_many_sizes.append(len(keys))
+            return []
+
+    collection = BoundedEdgeCollection()
+    adapter = build_adapter([], collection)
+    adapter.get_graph = lambda: FakeGraph(collection)
+    edges = [
+        TestEdge(
+            start_node=TestNode(id=f"source:{i}"),
+            end_node=TestNode(id="target:1"),
+            provenance="test-source",
+        )
+        for i in range(2001)
+    ]
+    for edge in edges:
+        edge.entity_resolution = "test-resolver"
+
+    adapter.store(edges, single_source=False)
+
+    assert collection.get_many_sizes == [1000, 1000, 1]
+
+
 def test_store_uses_update_many_for_existing_nodes_and_insert_many_for_new_nodes():
     existing_nodes = [{
         "_key": "IFXProtein:P1",
@@ -519,6 +549,46 @@ def test_update_many_with_backoff_splits_on_document_update_error():
     adapter.update_many_with_backoff(collection, records, label="Protein", kind="node")
 
     assert [len(call["docs"]) for call in collection.update_calls] == [4, 2, 1, 1, 2, 1, 1]
+
+
+def test_insert_many_retries_interrupted_overwrite_response_in_smaller_batches():
+    class InterruptedCollection(FakeCollection):
+        def __init__(self):
+            super().__init__()
+            self.documents = {}
+
+        def insert_many(self, docs, overwrite=False):
+            self.insert_calls.append({"docs": docs, "overwrite": overwrite})
+            for doc in docs:
+                self.documents[doc["_key"]] = doc
+            if len(docs) > 2:
+                raise ChunkedEncodingError("response cut off after server commit")
+            return []
+
+    adapter = ArangoOutputAdapter.__new__(ArangoOutputAdapter)
+    collection = InterruptedCollection()
+    records = [{"_key": str(i), "value": i} for i in range(4)]
+
+    adapter.insert_many_with_backoff(collection, records, overwrite=True, label="MetabolitePathwayEdge", kind="edge")
+
+    assert [len(call["docs"]) for call in collection.insert_calls] == [4, 2, 2]
+    assert all(call["overwrite"] for call in collection.insert_calls)
+    assert collection.documents == {doc["_key"]: doc for doc in records}
+
+
+def test_insert_many_does_not_replay_ambiguous_non_overwrite_batch():
+    class InterruptedCollection(FakeCollection):
+        def insert_many(self, docs, overwrite=False):
+            self.insert_calls.append({"docs": docs, "overwrite": overwrite})
+            raise ChunkedEncodingError("response cut off")
+
+    adapter = ArangoOutputAdapter.__new__(ArangoOutputAdapter)
+    collection = InterruptedCollection()
+
+    with pytest.raises(ChunkedEncodingError, match="response cut off"):
+        adapter.insert_many_with_backoff(collection, [{"_key": "a"}, {"_key": "b"}], overwrite=False)
+
+    assert len(collection.insert_calls) == 1
 
 
 class CurationAql:

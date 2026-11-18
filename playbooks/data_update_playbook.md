@@ -8,7 +8,7 @@ This playbook is for **updating existing sources**, not adding brand new ingest 
 ## Workflow Rules
 
 - Start with payload validation, not code changes.
-- Let the user run Snakemake and ETL executions unless they explicitly delegate those runs.
+- Let the user run source acquisition and ETL executions unless they explicitly delegate those runs.
 - Prefer a narrow working validation path before any broader rebuild.
 - Update the relevant design doc when a refresh exposes a new parsing rule, mapping change, or failure mode.
 - End with explicit validation instructions or follow-up rebuild steps for the user.

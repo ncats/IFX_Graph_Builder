@@ -163,6 +163,12 @@ def test_config_resolves_dataset_arguments_with_one_connection(monkeypatch) -> N
                     "snapshot_id": "example:derived:3",
                 },
             },
+        }, {
+            "kwargs": {"data_source": "example:records:1"},
+        }, {
+            "kwargs": {"data_source": {
+                "kind": "source_snapshot", "snapshot_id": "example:records:1",
+            }},
         }],
         "output_adapters": [{"kwargs": {"data_source": "leave:untouched:1"}}],
     }
@@ -175,6 +181,8 @@ def test_config_resolves_dataset_arguments_with_one_connection(monkeypatch) -> N
         {"kind": "derived_snapshot", "snapshot_id": "example:derived:3"},
     ]
     assert resolved["resolvers"][0]["kwargs"]["data_source"] == "resolved:example:records:1"
+    assert resolved["input_adapters"][1]["kwargs"]["data_source"] is resolved["resolvers"][0]["kwargs"]["data_source"]
+    assert resolved["input_adapters"][2]["kwargs"]["data_source"] is resolved["resolvers"][0]["kwargs"]["data_source"]
     assert resolved["output_adapters"] == config["output_adapters"]
 
 

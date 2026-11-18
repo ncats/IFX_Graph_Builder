@@ -62,12 +62,12 @@ First-pass scope:
 
 ## Version Strategy
 
-No discrete release number was identified during discovery. Mirror the existing NCBI publication workflow:
+No discrete release number was identified during discovery. For a future refresh:
 
-- Download `gene_summary.gz` through `workflows/pharos.Snakefile`.
+- Acquire and pin an exact NCBI publication snapshot in the Registry.
 - Capture `Last-Modified` as `version_date`.
 - Capture run date as `download_date`.
-- Write a small TSV, likely `input_files/auto/ncbi/ncbi_gene_summary_version.tsv`, consumed by the adapter.
+- Preserve the version and dates in Registry snapshot metadata for the adapter.
 
 ## Downstream MySQL Mapping
 
