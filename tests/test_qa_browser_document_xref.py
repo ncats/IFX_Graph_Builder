@@ -40,13 +40,14 @@ class _AQL:
 
 
 class _DB:
-    def __init__(self, matches, document=None, collection_exists=True):
+    def __init__(self, matches, document=None, collection_exists=True, collection_name="Gene"):
         self.coll = _Collection(document)
         self.aql = _AQL(matches)
         self.collection_exists = collection_exists
+        self.collection_name = collection_name
 
     def collection(self, name):
-        assert name == "Gene"
+        assert name == self.collection_name
         return self.coll
 
     def has_graph(self, name):
@@ -89,7 +90,35 @@ def test_ambiguous_xref_shows_canonical_choices(monkeypatch):
     body = response.body.decode()
     assert response.status_code == 200
     assert "IFXGene:A" in body and "IFXGene:B" in body
-    assert "More than one Gene matches" in body
+    assert "Matches for Symbol:DUPLICATE in Gene" in body
+
+
+def test_single_exact_disease_xref_redirects(monkeypatch):
+    lookup = "MESH:D1"
+    db = _DB([{"_key": "IFXDisease:ONE", "id": "IFXDisease:ONE",
+               "xref_match_types": {"exact": [lookup]}}], collection_name="Disease")
+    monkeypatch.setattr(qa_app, "get_db", lambda name: db)
+
+    response = asyncio.run(qa_app.document_detail(
+        _request(f"/db/test/collection/Disease/doc/{lookup}"), "test", "Disease", lookup,
+    ))
+
+    assert response.status_code == 303
+
+
+def test_single_broad_disease_xref_shows_typed_choice(monkeypatch):
+    lookup = "MESH:D1"
+    db = _DB([{"_key": "IFXDisease:ONE", "id": "IFXDisease:ONE",
+               "xref_match_types": {"broad": [lookup]}}], collection_name="Disease")
+    monkeypatch.setattr(qa_app, "get_db", lambda name: db)
+
+    response = asyncio.run(qa_app.document_detail(
+        _request(f"/db/test/collection/Disease/doc/{lookup}"), "test", "Disease", lookup,
+    ))
+
+    assert response.status_code == 200
+    assert "IFXDisease:ONE" in response.body.decode()
+    assert "broad" in response.body.decode()
 
 
 def test_direct_key_does_not_query_xrefs(monkeypatch):

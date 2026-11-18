@@ -2,6 +2,7 @@ from abc import ABC
 
 from src.constants import DataSourceName
 from src.input_adapters.sql_adapter import SqliteAdapter
+from src.input_adapters.sqlite_ramp.registry_sqlite import ramp_sqlite_file
 from src.input_adapters.sqlite_ramp.ramp_version_info import RaMPVersionInfo
 from src.interfaces.input_adapter import InputAdapter
 from src.models.datasource_version_info import DatasourceVersionInfo
@@ -11,8 +12,9 @@ from src.models.version import DataVersion, DatabaseVersion
 class RaMPSqliteAdapter(SqliteAdapter, InputAdapter, ABC):
     ramp_version_info: RaMPVersionInfo
 
-    def __init__(self, sqlite_file):
-        super().__init__(sqlite_file)
+    def __init__(self, data_source):
+        self.data_source = data_source
+        super().__init__(str(ramp_sqlite_file(data_source)))
         self.ramp_version_info = RaMPVersionInfo()
         self.ramp_version_info.initialize(self.get_session())
 
@@ -29,7 +31,4 @@ class RaMPSqliteAdapter(SqliteAdapter, InputAdapter, ABC):
         return DataSourceName.RaMP
 
     def get_version(self) -> DatasourceVersionInfo:
-        return DatasourceVersionInfo(
-            version=self.ramp_version_info.db_version.id,
-            version_date=self.ramp_version_info.db_version.timestamp
-        )
+        return self.data_source.version_info()

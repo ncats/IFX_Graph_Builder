@@ -8,9 +8,6 @@ from src.models.version import DatabaseVersion, DataVersion, DatabaseDataVersion
 
 class VersionMetaAdapter(RaMPSqliteAdapter):
 
-    def __init__(self, sqlite_file):
-        RaMPSqliteAdapter.__init__(self, sqlite_file=sqlite_file)
-
     def get_all(self) -> Generator[List[DatabaseVersion], None, None]:
         result = self.get_session().query(
             SqliteDBVersion.ramp_version,

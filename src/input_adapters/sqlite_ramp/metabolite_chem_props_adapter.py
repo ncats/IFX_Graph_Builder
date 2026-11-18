@@ -6,9 +6,6 @@ from src.input_adapters.sqlite_ramp.tables import ChemProps as SqliteChemProps
 
 class MetaboliteChemPropsAdapter(RaMPSqliteAdapter):
 
-    def __init__(self, sqlite_file):
-        RaMPSqliteAdapter.__init__(self, sqlite_file=sqlite_file)
-
     def get_all(self) -> Generator[List[Union[MetaboliteChemProps, MetaboliteChemPropsEdge]], None, None]:
         results = self.get_session().query(
             SqliteChemProps.ramp_id,

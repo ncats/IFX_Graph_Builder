@@ -11,6 +11,7 @@ from enum import Enum
 from typing import Type, List, get_origin, get_args, Union
 
 from arango.exceptions import DocumentInsertError, DocumentUpdateError
+from requests.exceptions import ChunkedEncodingError
 from src.core.decorators import collect_facets, collect_indexed_fields, collect_search_fields
 from src.core.curations import (
     METABOLITE_EQUIVALENCE_EDGES,
@@ -577,7 +578,9 @@ class ArangoOutputAdapter(OutputAdapter, ArangoAdapter):
 
                 existing_record_map = {}
                 if not single_source:
-                    existing_edges = edge_collection.get_many(keys)
+                    existing_edges = []
+                    for offset in range(0, len(keys), 1000):
+                        existing_edges.extend(edge_collection.get_many(keys[offset:offset + 1000]))
                     existing_record_map = {
                         (record['start_id'], record['end_id']): record for record in existing_edges
                     }
@@ -696,6 +699,19 @@ class ArangoOutputAdapter(OutputAdapter, ArangoAdapter):
     def _insert_many_with_backoff(self, collection, records, overwrite=False, label="", kind="node"):
         try:
             insert_result = collection.insert_many(records, overwrite=overwrite)
+        except ChunkedEncodingError:
+            # The server may have committed the batch before its response was cut off.
+            # Only overwrite inserts can be safely replayed with deterministic keys.
+            if not overwrite or len(records) == 1:
+                raise
+            midpoint = len(records) // 2
+            print(
+                f"{kind} insert response interrupted for {label}; "
+                f"retrying {len(records)} overwrite records in smaller batches"
+            )
+            self._insert_many_with_backoff(collection, records[:midpoint], overwrite=True, label=label, kind=kind)
+            self._insert_many_with_backoff(collection, records[midpoint:], overwrite=True, label=label, kind=kind)
+            return
         except DocumentInsertError:
             if len(records) == 1:
                 raise

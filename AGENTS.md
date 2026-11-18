@@ -47,7 +47,7 @@
 - For new ingest work, start with source discovery: identify the files, inspect real payload shape, and validate assumptions before implementing adapter/model changes.
 - For new ingest work, pause after discovery and provide a short implementation plan; get user confirmation before making code changes.
 - For source refreshes, profile the changed payloads before changing adapters, resolvers, or downstream conversion logic.
-- For Snakemake runs and ETL executions, let the user run those steps unless they explicitly ask otherwise.
+- For source acquisition and ETL executions, let the user run those steps unless they explicitly ask otherwise.
 
 ## Ingest Standards
 
@@ -151,7 +151,7 @@ IFX_ODIN (Ontology and Data Integration Network) is a modular ETL platform devel
 ## Tech Stack
 
 - **Language:** Python 3.11+
-- **Workflow:** Snakemake
+- **Workflow:** Registry-pinned source snapshots and YAML-driven ETL
 - **ORM:** SQLAlchemy
 - **Data models:** dataclasses, LinkML
 - **Databases:** MySQL, ArangoDB, Neo4j/Memgraph
@@ -170,7 +170,6 @@ src/
 ├── id_resolvers/          # Entity normalization
 ├── shared/                # Utilities, SQLAlchemy tables
 └── use_cases/             # Build scripts, YAML configs, secrets
-workflows/                 # Snakemake files for data download
 tests/                     # pytest tests
 *-container/               # Docker compose for databases
 ```
@@ -186,9 +185,6 @@ pip install -r requirements.txt -c constraints.txt
 
 # Run tests
 pytest
-
-# Download data files
-cd workflows && snakemake -j 4
 
 # Example ETL entrypoint a user may run for validation
 python -c "
@@ -272,7 +268,7 @@ Credentials in `src/use_cases/secrets/local_credentials.yaml`:
 - **For source refreshes**, read `playbooks/data_update_playbook.md` before investigating payload drift or changing code.
 - **For Pipeline Status Table updates**, read `playbooks/pharos_table_update_playbook.md` before changing `src/use_cases/pharos/TCRD_TODO.md`.
 - **Do not skip discovery.** Inspect the real files first, record mapping decisions in `designs/`, then propose the implementation plan before editing code.
-- **Do not run Snakemake or ETL on the user's behalf by default.** Prepare the changes and tell the user exactly what to run for validation.
+- **Do not acquire source data or run ETL on the user's behalf by default.** Prepare the changes and tell the user exactly what to run for validation.
 
 ## Key Files
 

@@ -14,9 +14,6 @@ class AnalyteAdapter(RaMPSqliteAdapter, ABC):
     def get_source_prefix(self):
         raise NotImplementedError("derived classes must implement get_source_prefix")
 
-    def __init__(self, sqlite_file: str):
-        RaMPSqliteAdapter.__init__(self, sqlite_file=sqlite_file)
-
     def add_equivalent_ids(self, analytes: List[Analyte]):
         id_results = self.get_session().query(
             SqliteSource.rampId,

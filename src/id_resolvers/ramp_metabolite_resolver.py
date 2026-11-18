@@ -2,6 +2,7 @@ from typing import List, Dict
 
 from src.input_adapters.sql_adapter import SqliteAdapter
 from src.input_adapters.sqlite_ramp.tables import Source as SqliteSource
+from src.input_adapters.sqlite_ramp.registry_sqlite import ramp_sqlite_file
 from src.interfaces.id_resolver import IdResolver, IdMatch
 from src.models.node import Node
 
@@ -17,8 +18,9 @@ class RampMetaboliteIdResolver(IdResolver, SqliteAdapter):
             return f"{prefix.lower()}:{id_part}"
         return input_id
 
-    def __init__(self, sqlite_file: str, **kwargs):
-        SqliteAdapter.__init__(self, sqlite_file)
+    def __init__(self, data_source, **kwargs):
+        self.data_source = data_source
+        SqliteAdapter.__init__(self, str(ramp_sqlite_file(data_source)))
         IdResolver.__init__(self, **kwargs)
         self._build_lookup()
 

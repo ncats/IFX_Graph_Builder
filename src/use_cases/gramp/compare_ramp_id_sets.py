@@ -1,6 +1,7 @@
 from typing import List
 import yaml
 from src.core.etl import ETL
+from src.core.registry_integration import RegistryIntegration
 from src.input_adapters.sqlite_ramp._compare_id_sets import MetaboliteSetEdgeAdapter
 from src.input_adapters.sqlite_ramp.analyte_pathway_edge_adapter import MetabolitePathwayEdgeAdapter
 from src.input_adapters.sqlite_ramp.analyte_synonym_adapter import MetaboliteSynonymAdapter
@@ -54,8 +55,8 @@ class build_db_for_comparing_ramp_ids:
 
     def do_etl(self):
         # Common Input Adapters
-        pathway_adapter = PathwayAdapter(sqlite_file=self.left_db).set_single_source(True)
-        metabolite_class_adapter = MetaboliteClassAdapter(sqlite_file=self.left_db).set_single_source(True)
+        pathway_adapter = PathwayAdapter(data_source=self.left_db).set_single_source(True)
+        metabolite_class_adapter = MetaboliteClassAdapter(data_source=self.left_db).set_single_source(True)
 
         self.do_etl_step([
             pathway_adapter,
@@ -63,11 +64,11 @@ class build_db_for_comparing_ramp_ids:
         ])
 
         # Input Adapters
-        left_met_adapter = MetaboliteAdapter(sqlite_file=self.left_db).set_single_source(True)
-        left_metabolite_synonym_list_adapter = MetaboliteSynonymAdapter(sqlite_file=self.left_db)
-        left_met_chem_props_adapter = MetaboliteChemPropsAdapter(sqlite_file=self.left_db).set_single_source(True)
-        left_metabolite_pathway_edge_adapter = MetabolitePathwayEdgeAdapter(sqlite_file=self.left_db).set_single_source(True)
-        left_metabolite_class_edge_adapter = MetaboliteClassEdgeAdapter(sqlite_file=self.left_db).set_single_source(True)
+        left_met_adapter = MetaboliteAdapter(data_source=self.left_db).set_single_source(True)
+        left_metabolite_synonym_list_adapter = MetaboliteSynonymAdapter(data_source=self.left_db)
+        left_met_chem_props_adapter = MetaboliteChemPropsAdapter(data_source=self.left_db).set_single_source(True)
+        left_metabolite_pathway_edge_adapter = MetabolitePathwayEdgeAdapter(data_source=self.left_db).set_single_source(True)
+        left_metabolite_class_edge_adapter = MetaboliteClassEdgeAdapter(data_source=self.left_db).set_single_source(True)
 
         left_labeler = AuxLabeler(self.left_label)
 
@@ -79,11 +80,11 @@ class build_db_for_comparing_ramp_ids:
             left_metabolite_class_edge_adapter
         ], left_labeler)
         # raise Exception('Debug stop')
-        right_met_adapter = MetaboliteAdapter(sqlite_file=self.right_db).set_single_source(True)
-        right_metabolite_synonym_list_adapter = MetaboliteSynonymAdapter(sqlite_file=self.right_db)
-        right_met_chem_props_adapter = MetaboliteChemPropsAdapter(sqlite_file=self.right_db).set_single_source(True)
-        right_metabolite_pathway_edge_adapter = MetabolitePathwayEdgeAdapter(sqlite_file=self.right_db).set_single_source(True)
-        right_metabolite_class_edge_adapter = MetaboliteClassEdgeAdapter(sqlite_file=self.right_db).set_single_source(True)
+        right_met_adapter = MetaboliteAdapter(data_source=self.right_db).set_single_source(True)
+        right_metabolite_synonym_list_adapter = MetaboliteSynonymAdapter(data_source=self.right_db)
+        right_met_chem_props_adapter = MetaboliteChemPropsAdapter(data_source=self.right_db).set_single_source(True)
+        right_metabolite_pathway_edge_adapter = MetabolitePathwayEdgeAdapter(data_source=self.right_db).set_single_source(True)
+        right_metabolite_class_edge_adapter = MetaboliteClassEdgeAdapter(data_source=self.right_db).set_single_source(True)
 
         right_labeler = AuxLabeler(self.right_label)
 
@@ -102,11 +103,11 @@ class build_db_for_comparing_ramp_ids:
         ], ComparingLabeler().set_left_labeler(left_labeler).set_right_labeler(right_labeler))
 
         if self.third_db:
-            third_met_adapter = MetaboliteAdapter(sqlite_file=self.third_db)
-            third_metabolite_synonym_list_adapter = MetaboliteSynonymAdapter(sqlite_file=self.third_db)
-            third_met_chem_props_adapter = MetaboliteChemPropsAdapter(sqlite_file=self.third_db)
-            third_metabolite_pathway_edge_adapter = MetabolitePathwayEdgeAdapter(sqlite_file=self.third_db)
-            third_metabolite_class_edge_adapter = MetaboliteClassEdgeAdapter(sqlite_file=self.third_db)
+            third_met_adapter = MetaboliteAdapter(data_source=self.third_db)
+            third_metabolite_synonym_list_adapter = MetaboliteSynonymAdapter(data_source=self.third_db)
+            third_met_chem_props_adapter = MetaboliteChemPropsAdapter(data_source=self.third_db)
+            third_metabolite_pathway_edge_adapter = MetabolitePathwayEdgeAdapter(data_source=self.third_db)
+            third_metabolite_class_edge_adapter = MetaboliteClassEdgeAdapter(data_source=self.third_db)
 
             third_labeler = AuxLabeler(self.third_label)
 
@@ -136,8 +137,9 @@ class build_db_for_comparing_ramp_ids:
         self.etl.input_adapters = input_list
         self.etl.do_etl()
 
-released_ramp = "/Users/kelleherkj/IdeaProjects/ramp-backend-ncats/schema/RaMP_SQLite_v3.0.11.sqlite"
-new_ramp =      "/Users/kelleherkj/IdeaProjects/ramp-backend-ncats/schema/RaMP_SQLite_v3.0.12.sqlite"
+registry = RegistryIntegration.connect({"credentials": "./src/use_cases/secrets/aws_ifx_registry.yaml"})
+released_ramp = registry.resolve("ramp:sqlite_database:3.0.7")
+new_ramp = registry.resolve("ramp:sqlite_database:3.0.12-ramp4.0")
 
 build_engine = build_db_for_comparing_ramp_ids(released_ramp, "ramp3011", new_ramp, "ramp3012")
 build_engine.truncate_old_db()

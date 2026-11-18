@@ -9,9 +9,6 @@ from src.models.metabolite import MetaboliteProteinEdge, Metabolite
 class MetaboliteProteinEdgeAdapter(RaMPSqliteAdapter):
     cached_audit_trail_info = None
 
-    def __init__(self, sqlite_file):
-        RaMPSqliteAdapter.__init__(self, sqlite_file=sqlite_file)
-
     def get_all(self) -> Generator[List[MetaboliteProteinEdge], None, None]:
         results = self.get_session().query(
             SqliteCatalyzed.rampCompoundId,

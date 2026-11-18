@@ -15,14 +15,6 @@ registry:
 resolvers:
   # Important: keep Disease resolution and Target resolution aligned with src/use_cases/pharos/pharos.yaml.
   # otherwise, IDs could drift between pharos.yaml and tcrd.yaml.
-  - label: translator_nn
-    import: ./src/id_resolvers/node_normalizer.py
-    class: TranslatorNodeNormResolver
-    kwargs:
-      base_url: https://nodenorm.transltr.io/1.5
-      types:
-        - Ligand
-
   - label: tcrd_targets
     import: ./src/id_resolvers/target_consumer_pharos_resolver.py
     class: TargetConsumerPharosCanonicalResolver

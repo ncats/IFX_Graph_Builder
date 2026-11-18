@@ -19,7 +19,7 @@ Downloaded via `workflows/pharos.Snakefile` into `input_files/auto/pathwaycommon
   - `version`: PC major version number (e.g. `14`)
   - `version_date`: release date parsed from the `#CPATH2: PC version N DD Mon YYYY` header (e.g. `2024-05-21`)
 
-The v14 download URL is hardcoded in the Snakefile; update it when a new complete release appears at
+For a new complete release, capture and pin a new Registry snapshot from
 `https://download.baderlab.org/PathwayCommons/PC2/`.
 
 ## File Format (surveyed 2026-03-16)
@@ -124,7 +124,7 @@ Add `PathwayCommons = "PathwayCommons"` to `DataSourceName` in `src/constants.py
 PathwayCommons releases are versioned numerically (v12, v14, etc.). The download URL is
 hardcoded to the current release. The Snakefile rule parses the version number and release
 date from the `#CPATH2:` comment line in `original_datasources.txt` and writes them to
-`pathwaycommons_version.tsv`. Update the hardcoded URL when a new release is available.
+`pathwaycommons_version.tsv`. For future releases, capture this metadata with the Registry snapshot.
 
 ## YAML wiring
 

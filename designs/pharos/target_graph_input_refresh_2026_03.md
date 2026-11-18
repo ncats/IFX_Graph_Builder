@@ -168,7 +168,7 @@ For the first-pass working config:
 ## Validation Notes
 
 - First-pass validation should use `src/use_cases/working.yaml`.
-- The user will run Snakemake and ETL steps.
+- The user will acquire required source snapshots and run ETL steps.
 - After the user runs the build, compare target graph node and edge counts plus resolver coverage before promoting config changes into the Pharos YAMLs.
 
 ## May 2026 Protein Refresh

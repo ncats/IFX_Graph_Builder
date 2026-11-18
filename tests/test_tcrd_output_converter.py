@@ -481,17 +481,20 @@ def test_entity_xref_dispatch_replaces_identity_xref_but_keeps_keyword_annotatio
     }).__class__ is Xref
 
 
-def test_disease_entity_xrefs_only_include_exact_aliases():
+def test_disease_entity_xrefs_include_typed_edges():
     converter = TCRDOutputConverter()
     converter.id_mapping["ncats_disease"] = {"IFXDisease:ONE": 12}
     rows = converter.disease_entity_xref_converter({
         "id": "IFXDisease:ONE",
-        "xref": ["IFXDisease:ONE", "MESH:D001943"],
-        "xref_match_types": {"exact": ["IFXDisease:ONE", "MESH:D001943"]},
+        "xref": ["IFXDisease:ONE", "MESH:D001943", "MESH:D000001"],
+        "xref_match_types": {
+            "exact": ["IFXDisease:ONE", "MESH:D001943"],
+            "broad": ["MESH:D000001"],
+        },
         "disease_harmonizer_payload": {"non_exact_xrefs": "MESH:D000001=broad"},
     })
-    assert {row.source_id for row in rows} == {"IFXDisease:ONE", "MESH:D001943"}
-    assert {row.match_type for row in rows} == {"exact"}
+    assert {row.source_id for row in rows} == {"IFXDisease:ONE", "MESH:D001943", "MESH:D000001"}
+    assert {row.match_type for row in rows} == {"exact", "broad"}
 
 
 def test_ligand_entity_xrefs_include_ids_not_in_scalar_columns():

@@ -13,9 +13,6 @@ from src.models.protein import Protein
 
 class AnalytePathwayEdgeAdapter(RaMPSqliteAdapter, ABC):
 
-    def __init__(self, sqlite_file):
-        RaMPSqliteAdapter.__init__(self, sqlite_file=sqlite_file)
-
     @abstractmethod
     def get_id_prefix(self) -> str:
         pass

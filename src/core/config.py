@@ -3,7 +3,7 @@ from typing import Any, List
 import yaml
 
 from src.core.object_factory import create_object_from_config
-from src.core.registry_integration import RegistryIntegration
+from src.core.registry_integration import RegistryIntegration, RegistryReference
 from src.interfaces.id_resolver import IdResolver
 from src.interfaces.input_adapter import InputAdapter
 from src.interfaces.output_adapter import OutputAdapter
@@ -12,17 +12,21 @@ from src.interfaces.output_adapter import OutputAdapter
 def _resolve_registry_datasets(
     config_node: Any,
     registry: RegistryIntegration,
+    resolved_datasets: dict,
 ):
     if isinstance(config_node, dict):
         resolved = {}
         for key, value in config_node.items():
             if key == "data_source" or key.endswith("_data_source"):
-                resolved[key] = registry.resolve(value)
+                reference = RegistryReference.parse(value)
+                if reference not in resolved_datasets:
+                    resolved_datasets[reference] = registry.resolve(value)
+                resolved[key] = resolved_datasets[reference]
             else:
-                resolved[key] = _resolve_registry_datasets(value, registry)
+                resolved[key] = _resolve_registry_datasets(value, registry, resolved_datasets)
         return resolved
     if isinstance(config_node, list):
-        return [_resolve_registry_datasets(entry, registry) for entry in config_node]
+        return [_resolve_registry_datasets(entry, registry, resolved_datasets) for entry in config_node]
     return config_node
 
 
@@ -34,9 +38,10 @@ def resolve_registry_references(config_dict: dict) -> dict:
         raise TypeError("registry configuration must be a mapping")
     registry = RegistryIntegration.connect(registry_config)
     resolved = dict(config_dict)
+    resolved_datasets = {}
     for key in ("resolvers", "input_adapters", "post_adapters"):
         if key in resolved:
-            resolved[key] = _resolve_registry_datasets(resolved[key], registry)
+            resolved[key] = _resolve_registry_datasets(resolved[key], registry, resolved_datasets)
     return resolved
 
 class Config:

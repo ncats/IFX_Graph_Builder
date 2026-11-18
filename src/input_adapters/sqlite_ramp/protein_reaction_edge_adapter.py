@@ -8,9 +8,6 @@ from src.models.reaction import Reaction
 
 class ProteinReactionEdgeAdapter(RaMPSqliteAdapter):
 
-    def __init__(self, sqlite_file):
-        RaMPSqliteAdapter.__init__(self, sqlite_file=sqlite_file)
-
     def get_all(self) -> Generator[List[ProteinReactionEdge], None, None]:
         results = self.get_session().query(
             SqliteReactionToProtein.ramp_gene_id,

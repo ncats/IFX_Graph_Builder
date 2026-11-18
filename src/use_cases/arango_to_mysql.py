@@ -78,9 +78,6 @@ class ArangoToMySqlConverter(ArangoAdapter):
         if not schemas:
             raise RuntimeError("No collection_schemas found in metadata_store")
 
-        self.mysql.recreate_mysql_db(self.mysql_db_name)
-        engine = self.mysql.get_engine()
-
         # Plan data tables — identifies which edge collections are replaced by data table FKs
         data_implicit_edges, data_table_configs = self._plan_data_tables(schemas)
 
@@ -101,6 +98,8 @@ class ArangoToMySqlConverter(ArangoAdapter):
             table = self._create_data_table(config)
             data_tables[config["table_name"]] = (table, config)
 
+        self.mysql.recreate_mysql_db(self.mysql_db_name)
+        engine = self.mysql.get_engine()
         self.sa_metadata.create_all(engine)
         self._populate_enum_lookup_tables(engine)
 
@@ -396,7 +395,8 @@ class ArangoToMySqlConverter(ArangoAdapter):
         Named {parent}__{field} with columns (parent_id FK, key, value).
         """
         table_name = f"{parent_name}__{field_name}"
-        val_type = _SQL_TYPE_MAP.get(field_schema.get("value_type"), Text)
+        value_schema = field_schema.get("value_type")
+        val_type = _SQL_TYPE_MAP.get(value_schema, Text) if isinstance(value_schema, str) else Text
         return Table(
             table_name, self.sa_metadata,
             Column("parent_id", String(255), ForeignKey(f"{parent_name}.id"), nullable=False),
@@ -625,6 +625,8 @@ class ArangoToMySqlConverter(ArangoAdapter):
                     val = doc.get(dict_field)
                     if val and isinstance(val, dict):
                         for k, v in val.items():
+                            if isinstance(v, (dict, list)):
+                                v = json.dumps(v)
                             dict_rows[dict_field].append({"parent_id": doc_id, "key": k, "value": v})
 
             with engine.connect() as conn:

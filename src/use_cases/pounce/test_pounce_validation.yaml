@@ -3,7 +3,7 @@
 
 destination_credentials: &destination_credentials ./src/use_cases/secrets/ifxdev_arangodb.yaml
 object_storage_credentials: &object_storage_credentials ./src/use_cases/secrets/aws_ifx_registry.yaml
-ramp_sqlite_file: &ramp_sqlite_file ./input_files/manual/ramp/RaMP_SQLite_v3.0.12.sqlite
+ramp_release: &ramp_release ramp:sqlite_database:3.0.12-ramp4.0
 
 registry:
   credentials: *object_storage_credentials
@@ -15,13 +15,13 @@ resolvers:
     kwargs:
       types:
         - Metabolite
-      sqlite_file: *ramp_sqlite_file
+      data_source: *ramp_release
 
   - label: ensembl_resolver
     import: ./src/id_resolvers/ensembl_gene_resolver.py
     class: EnsemblGeneResolver
     kwargs:
-      data_source: ensembl:human_biomart:116-export1
+      data_source: ensembl:human_ftp:116
       types:
         - Gene
 

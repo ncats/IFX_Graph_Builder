@@ -82,7 +82,7 @@ Gene, Transcript, Protein, GeneTranscriptEdge, GeneProteinEdge, and
 TranscriptProteinEdge counts and endpoint integrity. Compare the graph's
 protein scope and confidence distribution with the figures above. Continue
 with `impatient_pharos`, `target_graph`, `pharos`, and the MySQL conversion only
-after that narrow graph is clean. The user runs Snakemake and ETL builds.
+after that narrow graph is clean. The user acquires required source snapshots and runs ETL builds.
 
 From the repository root, the build entrypoints are:
 

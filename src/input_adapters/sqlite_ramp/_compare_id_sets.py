@@ -77,10 +77,10 @@ class MetaboliteSetEdgeAdapter(InputAdapter):
 
         yield relationships
 
-    def set_left(self, ramp_file: str):
-        self.left_adapter = MetaboliteAdapter(sqlite_file=ramp_file)
+    def set_left(self, data_source):
+        self.left_adapter = MetaboliteAdapter(data_source=data_source)
         return self
 
-    def set_right(self, ramp_file: str):
-        self.right_adapter = MetaboliteAdapter(sqlite_file=ramp_file)
+    def set_right(self, data_source):
+        self.right_adapter = MetaboliteAdapter(data_source=data_source)
         return self

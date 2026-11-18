@@ -1,8 +1,8 @@
-import os
-import csv
-from datetime import datetime
+"""Gene annotations from a pinned Ensembl human FTP GFF3 snapshot."""
+
+import gzip
 from typing import Generator, List
-import gffutils
+from urllib.parse import unquote
 
 from src.constants import DataSourceName, Prefix
 from src.interfaces.input_adapter import InputAdapter
@@ -11,82 +11,66 @@ from src.models.gene import Gene, GeneticLocation, Strand
 from src.models.node import EquivalentId
 
 
+GFF3_FILE = "ensembl_homo_sapiens.gff3.gz"
+GENE_FEATURE_TYPES = {"gene", "ncRNA_gene", "pseudogene"}
+CANONICAL_CHROMOSOMES = {str(number) for number in range(1, 23)} | {"X", "Y", "MT"}
+
+
+def gene_features(data_source, *, canonical_only=True):
+    path = data_source.file(GFF3_FILE)
+    with gzip.open(path, "rt", encoding="utf-8") as handle:
+        first = handle.readline()
+        if not first.startswith("##gff-version 3"):
+            raise ValueError(f"Ensembl GFF3 header missing in {path}")
+        for line in handle:
+            if line.startswith("#"):
+                continue
+            columns = line.rstrip("\n").split("\t")
+            if len(columns) != 9:
+                raise ValueError(f"Malformed Ensembl GFF3 row in {path}: {line[:160]}")
+            if columns[2] not in GENE_FEATURE_TYPES:
+                continue
+            if canonical_only and columns[0] not in CANONICAL_CHROMOSOMES:
+                continue
+            attributes = {
+                key: unquote(value)
+                for field in columns[8].split(";") if "=" in field
+                for key, value in [field.split("=", 1)]
+            }
+            gene_id = attributes.get("gene_id")
+            if not gene_id or attributes.get("ID") != f"gene:{gene_id}":
+                raise ValueError(f"Ensembl GFF3 gene identifier is missing or inconsistent: {line[:160]}")
+            yield gene_id, columns, attributes
+
+
 class GeneAdapter(InputAdapter):
-    version_info: DatasourceVersionInfo
-    data_file_path: str
-
-    def __init__(self, data_file_path: str, version_file_path: str):
-        InputAdapter.__init__(self)
-        self.data_file_path = data_file_path
-        ensembl_version = None
-
-        with open(version_file_path, "r", encoding="utf-8") as vf:
-            reader = csv.DictReader(line for line in vf if line.strip())
-            first_row = next(reader)
-            ensembl_version = first_row.get("ENSEMBL_VERSION")
-
-        self.version_info = DatasourceVersionInfo(
-            version=ensembl_version,
-            download_date=datetime.fromtimestamp(os.path.getmtime(data_file_path)).date()
-        )
-
-    def connect_to_temp_gene_db(self):
-        db_path = os.path.join(os.path.dirname(self.data_file_path), 'genes.db')
-        rebuild_db = self.db_has_changed_since_build(db_path)
-        if rebuild_db:
-            return self.create_new_temp_db(db_path)
-        else:
-            return self.connect_to_existing_temp_db(db_path)
-
-    def connect_to_existing_temp_db(self, db_path):
-        print(f"File hasn't changed recently, Reusing database at {db_path}...")
-        db = gffutils.FeatureDB(db_path)
-        return db
-
-    def create_new_temp_db(self, db_path):
-        print(f"Building/updating database at {db_path}...")
-        db = gffutils.create_db(
-            self.data_file_path,
-            dbfn=db_path,
-            force=True,
-            disable_infer_genes=True,
-            disable_infer_transcripts=True,
-            merge_strategy='merge'
-        )
-        return db
-
-    def db_has_changed_since_build(self, db_path):
-        rebuild_db = True
-        if os.path.exists(db_path):
-            gtf_mtime = os.path.getmtime(self.data_file_path)
-            db_mtime = os.path.getmtime(db_path)
-            if db_mtime >= gtf_mtime:
-                rebuild_db = False
-        return rebuild_db
+    def __init__(self, data_source):
+        self.data_source = data_source
 
     def get_all(self) -> Generator[List[Gene], None, None]:
-        db = self.connect_to_temp_gene_db()
         genes = []
-        for gene in db.features_of_type('gene'):
-            if gene.chrom.find('.') >= 0:
-                continue
+        seen = set()
+        for gene_id, columns, attributes in gene_features(self.data_source):
+            if gene_id in seen:
+                raise ValueError(f"Duplicate Ensembl GFF3 gene ID: {gene_id}")
+            seen.add(gene_id)
             genes.append(Gene(
-                id=EquivalentId(id = gene.id, type=Prefix.ENSEMBL).id_str(),
+                id=EquivalentId(id=gene_id, type=Prefix.ENSEMBL).id_str(),
                 location=GeneticLocation(
-                    chromosome=gene.chrom,
-                    start=gene.start,
-                    end=gene.end,
-                    strand=Strand.parse(gene.strand)
+                    chromosome=columns[0],
+                    start=int(columns[3]),
+                    end=int(columns[4]),
+                    strand=Strand.parse(columns[6]),
                 ),
-                symbol=gene.attributes.get('gene_name', [None])[0],
-                biotype=gene.attributes.get('gene_biotype', [None])[0]
+                symbol=attributes.get("Name"),
+                biotype=attributes.get("biotype"),
             ))
-
+        if not genes:
+            raise ValueError(f"Ensembl GFF3 has no canonical human gene features: {self.data_source.snapshot_id}")
         yield genes
-
 
     def get_datasource_name(self) -> DataSourceName:
         return DataSourceName.ENSEMBL
 
     def get_version(self) -> DatasourceVersionInfo:
-        return self.version_info
+        return self.data_source.version_info()
