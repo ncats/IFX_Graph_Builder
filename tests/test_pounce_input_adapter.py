@@ -9,9 +9,10 @@ from src.input_adapters.pounce_sheets.pounce_input_adapter import PounceInputAda
 from src.input_adapters.pounce_sheets.pounce_node_builder import PounceNodeBuilder, _iter_pairs
 from src.input_adapters.excel_sheet_adapter import ExcelsheetParser
 from src.models.pounce.project import Project, AccessLevel
-from src.models.pounce.experiment import Experiment, ExperimentBiospecimenEdge, RunBiosample
+from src.models.pounce.experiment import Experiment, ExperimentBiospecimenEdge, ExperimentMeasuredGeneEdge, PlatformType, RunBiosample
 from src.models.protein import MeasuredProtein
-from src.models.pounce.dataset import Dataset, DatasetProteinEdge
+from src.models.gene import MeasuredGene, MeasuredGeneEdge
+from src.models.pounce.dataset import Dataset, DatasetGeneEdge, DatasetMetaboliteEdge, DatasetProteinEdge
 from src.models.pounce.raw_data_files import RawDataFiles, ExperimentRawDataFilesEdge, RunBiosampleRawDataFilesEdge
 from src.models.pounce.workbook_artifact import WorkbookArtifact
 from src.constants import DataSourceName
@@ -42,6 +43,64 @@ def test_populated_gene_meta_with_na_mapping_fails_before_silent_skip():
     parser.get_parameter_map.return_value = {"gene_id": "NA"}
     with pytest.raises(ValueError, match="GeneMeta.*GeneMap gene_id mapping"):
         list(PounceNodeBuilder()._parse_genes(None, parser))
+
+
+def test_mixed_single_cell_features_keep_source_ids_without_false_gene_links():
+    parser = MagicMock(spec=ExcelsheetParser)
+    parser.sheet_dfs = {"GeneMeta": pd.DataFrame([
+        {"GeneID": "ENSG00000141510.17", "Symbol": "TP53"},
+        {"GeneID": "ENSG00000141510.17_PAR_Y", "Symbol": "TP53_PAR_Y"},
+        {"GeneID": " gene-S ", "Symbol": "CoV2_S"},
+    ])}
+    parser.get_parameter_map.return_value = {
+        "gene_id": "GeneID", "hgnc_gene_symbol": "Symbol",
+    }
+    builder = PounceNodeBuilder()
+    batches = list(builder._parse_genes(Experiment(id="E1", platform_type=PlatformType.SC_RNASEQ), parser))
+    nodes = [item for item in batches[0] if isinstance(item, MeasuredGene)]
+    edges = [item for item in batches[1] if isinstance(item, MeasuredGeneEdge)]
+    assert {node.id for node in nodes} == {
+        "ENSEMBL:ENSG00000141510.17",
+        "E1:measured_gene:ENSG00000141510.17_PAR_Y",
+        "E1:measured_gene:gene-S",
+    }
+    assert len(edges) == 1
+    assert edges[0].end_node.id == "ENSEMBL:ENSG00000141510.17"
+    experiment_edges = [item for item in batches[2] if isinstance(item, ExperimentMeasuredGeneEdge)]
+    assert len(experiment_edges) == 3
+    assert experiment_edges[2].details[0].source_feature_id == " gene-S "
+    assert experiment_edges[2].details[0].source_symbol == "CoV2_S"
+    from src.output_adapters.arango_output_adapter import ArangoOutputAdapter
+    output = ArangoOutputAdapter.__new__(ArangoOutputAdapter)
+    assert output.clean_dict(experiment_edges[2], True)["details"] == [
+        {
+            "source_feature_id": " gene-S ", "source_symbol": "CoV2_S",
+            "source_biotype": None, "run_biosample_ids": [],
+        }
+    ]
+    assert builder._ctx.gene_by_raw_id[" gene-S "] is builder._ctx.gene_by_raw_id["gene-S"]
+    matrix_edges = builder._build_analyte_edges(
+        Dataset(id="D1"), pd.DataFrame(index=[" gene-S "]),
+        DatasetGeneEdge, DatasetMetaboliteEdge, DatasetProteinEdge,
+    )
+    assert len(matrix_edges) == 1
+    assert matrix_edges[0].end_node.id == "E1:measured_gene:gene-S"
+
+
+def test_sc_gene_membership_rejects_run_from_another_experiment():
+    parser = MagicMock(spec=ExcelsheetParser)
+    parser.file_path = "second_experiment.xlsx"
+    parser.sheet_dfs = {"GeneMeta": pd.DataFrame([{
+        "GeneID": "ENSG00000141510.17", "Runs": "R1",
+    }])}
+    parser.get_parameter_map.return_value = {"gene_id": "GeneID", "runbiosample": "Runs"}
+    builder = PounceNodeBuilder()
+    builder._ctx.run_biosample_by_original_id["R1"] = RunBiosample(id="first-run")
+    with pytest.raises(ValueError, match="unknown runbiosample IDs.*R1"):
+        list(builder._parse_genes(
+            Experiment(id="E2", platform_type=PlatformType.SC_RNASEQ),
+            parser, valid_run_ids={"R2"},
+        ))
 
 
 def test_all_null_matrix_id_column_has_actionable_error():

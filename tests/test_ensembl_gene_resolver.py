@@ -6,6 +6,7 @@ import pytest
 from src.constants import Prefix
 from src.id_resolvers.ensembl_gene_resolver import EnsemblGeneResolver
 from src.input_adapters.ensembl.gene import GeneAdapter
+from src.models.gene import Gene
 from src.models.node import EquivalentId
 from tests.registry_fakes import registry_dataset
 
@@ -61,9 +62,18 @@ def test_ensembl_resolver_uses_ftp_gene_and_entrez_assertions(tmp_path, monkeypa
         assert (ensembl, ensembl, "exact") in pairs
     assert resolver.get_version_info() == "ensembl:human_ftp:116:ensembl-gene-resolver-2"
 
+    source_id = f"{gene}.17"
+    versioned = resolver.resolve_internal([Gene(id=source_id)])[source_id][0]
+    assert versioned.input == source_id
+    assert versioned.match == gene
+    assert "version_free_fallback" in versioned.context
+    assert resolver.resolve_internal([Gene(id=f"{_id('ENSG00000000000', Prefix.ENSEMBL)}.1")]) == {}
+    assert resolver.resolve_internal([Gene(id=f"{gene}.bad")]) == {}
+
 
 def test_ensembl_gene_adapter_reads_canonical_gene_like_features(tmp_path):
     adapter = GeneAdapter(data_source=_source(tmp_path))
+    assert adapter.get_name() == "GeneAdapter (Ensembl)"
     genes = [gene for batch in adapter.get_all() for gene in batch]
     assert len(genes) == 3
     assert {gene.id for gene in genes} == {
@@ -76,6 +86,12 @@ def test_ensembl_gene_adapter_reads_canonical_gene_like_features(tmp_path):
     assert genes[0].location.chromosome == "17"
     assert (genes[0].location.start, genes[0].location.end) == (100, 200)
     assert adapter.get_version().version == "116"
+
+    all_adapter = GeneAdapter(data_source=_source(tmp_path), canonical_only=False)
+    assert all_adapter.get_name() == "GeneAdapter (Ensembl) [all:ensembl:human_ftp:116]"
+    all_genes = [gene for batch in all_adapter.get_all() for gene in batch]
+    assert len(all_genes) == 4
+    assert _id("ENSG00000888888", Prefix.ENSEMBL) in {gene.id for gene in all_genes}
 
 
 def test_ensembl_resolver_requires_both_registry_files(tmp_path):

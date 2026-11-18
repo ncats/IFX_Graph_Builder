@@ -91,15 +91,15 @@ def check_gene_coverage(
     mapped = 0
     unmapped_ids = []
 
-    for gene_id in unique_gene_ids:
-        ensembl_id = EquivalentId(id=gene_id, type=Prefix.ENSEMBL).id_str()
-        results = resolver.resolve_internal([Gene(id=ensembl_id)])
-        did_map = len(results.get(ensembl_id, [])) > 0
-
-        if did_map:
-            mapped += 1
-        else:
-            unmapped_ids.append(gene_id)
+    for offset in range(0, len(unique_gene_ids), 1000):
+        gene_ids = unique_gene_ids[offset:offset + 1000]
+        lookup_ids = [EquivalentId(id=gene_id, type=Prefix.ENSEMBL).id_str() for gene_id in gene_ids]
+        results = resolver.resolve_internal([Gene(id=lookup_id) for lookup_id in lookup_ids])
+        for gene_id, lookup_id in zip(gene_ids, lookup_ids):
+            if results.get(lookup_id):
+                mapped += 1
+            else:
+                unmapped_ids.append(gene_id)
 
     return AnalyteCoverage(
         analyte_type="Gene",

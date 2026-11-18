@@ -45,6 +45,7 @@ input_adapters:
     class: GeneAdapter
     kwargs:
       data_source: ensembl:human_ftp:116
+      canonical_only: false
 
   - import: ./src/input_adapters/sqlite_ramp/metabolite_adapter.py
     class: MetaboliteAdapter
@@ -170,6 +171,28 @@ input_adapters:
       project_file: ./input_files/manual/pounce/gse335200/GSE335200_Project.xlsx
       experiment_files:
         - ./input_files/manual/pounce/gse335200/exp0_GSE335200_Experiment.xlsx
+      stats_results_files:
+        - null
+      validators_config: ./src/use_cases/pounce/pounce_validators.yaml
+
+  - import: ./src/input_adapters/pounce_sheets/pounce_input_adapter.py
+    class: PounceInputAdapter
+    kwargs:
+      checkpoint_id: geo:GSE325804
+      project_file: ./input_files/manual/pounce/gse325804/GSE325804_Project.xlsx
+      experiment_files:
+        - ./input_files/manual/pounce/gse325804/exp0_GSE325804_Experiment.xlsx
+      stats_results_files:
+        - null
+      validators_config: ./src/use_cases/pounce/pounce_validators.yaml
+
+  - import: ./src/input_adapters/pounce_sheets/pounce_input_adapter.py
+    class: PounceInputAdapter
+    kwargs:
+      checkpoint_id: geo:GSE351695
+      project_file: ./input_files/manual/pounce/gse351695/GSE351695_Project.xlsx
+      experiment_files:
+        - ./input_files/manual/pounce/gse351695/exp0_GSE351695_Experiment.xlsx
       stats_results_files:
         - null
       validators_config: ./src/use_cases/pounce/pounce_validators.yaml

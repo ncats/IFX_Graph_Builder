@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import date
 from typing import Dict, Optional, List, TYPE_CHECKING
 
@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from src.models.pounce.project import Project, Person
     from src.models.pounce.biosample import Biosample
     from src.models.pounce.biospecimen import Biospecimen
+    from src.models.gene import MeasuredGene
 
 
 @dataclass
@@ -64,6 +65,28 @@ class ExperimentPersonEdge(Relationship):
     start_node: "Experiment" = None
     end_node: "Person" = None
     roles: List[str] = field(default_factory=list)
+
+
+@dataclass
+class ExperimentMeasuredGeneDetail:
+    source_feature_id: str
+    source_symbol: Optional[str] = None
+    source_biotype: Optional[str] = None
+    run_biosample_ids: List[str] = field(default_factory=list)
+
+    def to_dict(self):
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict):
+        return cls(**data)
+
+
+@dataclass
+class ExperimentMeasuredGeneEdge(Relationship):
+    start_node: "Experiment" = None
+    end_node: "MeasuredGene" = None
+    details: List[ExperimentMeasuredGeneDetail] = field(default_factory=list)
 
 
 @dataclass
