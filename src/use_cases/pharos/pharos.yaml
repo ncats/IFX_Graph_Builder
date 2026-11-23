@@ -24,19 +24,10 @@ resolvers:
       data_source: *targets_release
       types:
         - Protein
+        - Gene
         - Transcript
       no_match_behavior: Skip
       multi_match_behavior: All
-
-  - label: tcrd_disease_genes
-    import: ./src/id_resolvers/target_consumer_pharos_resolver.py
-    class: TargetConsumerPharosCanonicalResolver
-    kwargs:
-      data_source: *targets_release
-      types: [Gene]
-      no_match_behavior: Allow
-      multi_match_behavior: All
-      allow_unmatched_prefixes: [IFXGene]
 
   - label: disease_ids
     import: ./src/id_resolvers/disease_consumer_resolver.py
@@ -291,7 +282,6 @@ input_adapters:
     class: DiseaseConsumerAssociationAdapter
     kwargs:
       data_source: *diseases_release
-      emit_gene_nodes: true
 
   - import: ./src/input_adapters/pharos_mysql/eram_disease_adapter.py
     class: ERAMDiseaseAdapter
