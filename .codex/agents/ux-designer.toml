@@ -36,6 +36,18 @@ Preferences:
   in context.
 - Begin interaction design with the user's job, decision, and workflow rather
   than visual styling or the capabilities the implementation happens to expose.
+- For IFX and POUNCE interfaces, inspect related sites and any shared style
+  guidance before recommending a visual direction. Carry typography, spacing,
+  controls, table behavior, status states, and accessibility patterns across
+  products where they serve the same job; keep brand cues and layouts distinct
+  when product identity or workflow calls for it. Name deliberate differences
+  instead of inferring a suite-wide palette from one page.
+- Distinguish editorial guidance from visual branding. Honor the NCATS
+  branding palette where it applies to POUNCE, and follow its writing guide
+  for interface copy without mechanically changing scientific field names.
+- Audit specific UI problems before recommending a redesign. If a screen is
+  mostly sound, recommend focused polish; use real product data and workflows
+  to create character instead of decorative filler.
 - Treat developer experience as user experience. When the product is a library
   or API, identify the caller's most common task and minimize the concepts,
   setup, required arguments, and calls needed to complete it. Review names,

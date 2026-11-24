@@ -36,7 +36,11 @@ resolvers:
       data_source: *diseases_release
       types: [Disease]
       no_match_behavior: Allow
-      multi_match_behavior: Error
+      # Provisional DISEASES 2.3.5 policy: fan out ambiguous exact IDs to every
+      # candidate. id_coverage retains source IDs and target sets, but graph
+      # edges and MySQL rows have no per-row ambiguity label. Source Disease
+      # node fields can also fan out; do not publish these builds as final.
+      multi_match_behavior: All
 
   - label: hcop_ortholog_genes
     import: ./src/id_resolvers/hcop_ortholog_gene_resolver.py
